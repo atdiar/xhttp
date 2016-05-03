@@ -36,8 +36,12 @@ func Example() {
 	s.USE(middlewareExample{})
 
 	s.GET("/", xhttp.HandlerFunc(func(ctx execution.Context, res http.ResponseWriter, req *http.Request) {
-
-		fmt.Fprint(res, "OK")
+		ctx.Put("test", "OK")
+		val, err := ctx.Get("test")
+		if err != nil {
+			panic(err) // for the sake of the example, we will panic. Not idiomatic.
+		}
+		fmt.Fprint(res, val)
 	}))
 
 	req, err := http.NewRequest("GET", "http://example.com/", nil)
