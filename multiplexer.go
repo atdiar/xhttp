@@ -31,6 +31,14 @@ func ChangeMux(mux *http.ServeMux) func(*ServeMux) {
 	}
 }
 
+// SetTimeout returns a functional configuration option which provides a
+// time boundary for the handling of requests under the form of a timeout.
+func SetTimeout(t time.Duration) func(*ServeMux) {
+	return func(sm *ServeMux) {
+		sm.timeout = t
+	}
+}
+
 // NewServeMux creates a new multiplexer which holds the request servicing logic.
 // The mux used by default is http.DefaultServeMux.
 // That can be changed by using the ChangeMux configuration option.
