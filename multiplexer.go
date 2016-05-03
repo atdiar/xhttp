@@ -134,7 +134,10 @@ func (sm ServeMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			http.Error(w, http.StatusText(405), 405)
 		}
 	} else {
-		http.Error(w, http.StatusText(405), 405)
+		// If nothing was registered by any other entity, h will default to
+		// a page not found handler (404)
+		h, _ := sm.ServeMux.Handler(req)
+		h.ServeHTTP(w, req)
 	}
 }
 
