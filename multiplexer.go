@@ -59,77 +59,139 @@ func (sm ServeMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		method := strings.ToUpper(req.Method)
 		switch method {
 		case "GET":
-			S := sac.New(sm.pool)
+			// Let's create the datastore and then the execution context
+			rawS := sm.pool.Get()
+			S := rawS.(*sac.Instance)
 			ctx := execution.NewContext(S)
 			if sm.timeout != 0 {
 				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
 			}
-			defer ctx.Cancel()
+			// Let's handle the request
 			vh.get.ServeHTTP(ctx, w, req)
+			// Let's cleanup
+			ctx.Cancel()
+			S.Clear()
+			sm.pool.Put(S)
+
 		case "POST":
-			S := sac.New(sm.pool)
+			// Let's create the datastore and then the execution context
+			rawS := sm.pool.Get()
+			S := rawS.(*sac.Instance)
 			ctx := execution.NewContext(S)
 			if sm.timeout != 0 {
 				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
 			}
-			defer ctx.Cancel()
+			// Let's handle the request
 			vh.post.ServeHTTP(ctx, w, req)
+			// Let's cleanup
+			ctx.Cancel()
+			S.Clear()
+			sm.pool.Put(S)
+
 		case "PUT":
-			S := sac.New(sm.pool)
+			// Let's create the datastore and then the execution context
+			rawS := sm.pool.Get()
+			S := rawS.(*sac.Instance)
 			ctx := execution.NewContext(S)
 			if sm.timeout != 0 {
 				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
 			}
-			defer ctx.Cancel()
+			// Let's handle the request
 			vh.put.ServeHTTP(ctx, w, req)
+			// Let's cleanup
+			ctx.Cancel()
+			S.Clear()
+			sm.pool.Put(S)
+
 		case "PATCH":
-			S := sac.New(sm.pool)
+			// Let's create the datastore and then the execution context
+			rawS := sm.pool.Get()
+			S := rawS.(*sac.Instance)
 			ctx := execution.NewContext(S)
 			if sm.timeout != 0 {
 				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
 			}
-			defer ctx.Cancel()
+			// Let's handle the request
 			vh.patch.ServeHTTP(ctx, w, req)
+			// Let's cleanup
+			ctx.Cancel()
+			S.Clear()
+			sm.pool.Put(S)
+
 		case "DELETE":
-			S := sac.New(sm.pool)
+			// Let's create the datastore and then the execution context
+			rawS := sm.pool.Get()
+			S := rawS.(*sac.Instance)
 			ctx := execution.NewContext(S)
 			if sm.timeout != 0 {
 				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
 			}
-			defer ctx.Cancel()
+			// Let's handle the request
 			vh.delete.ServeHTTP(ctx, w, req)
+			// Let's cleanup
+			ctx.Cancel()
+			S.Clear()
+			sm.pool.Put(S)
+
 		case "HEAD":
-			S := sac.New(sm.pool)
+			// Let's create the datastore and then the execution context
+			rawS := sm.pool.Get()
+			S := rawS.(*sac.Instance)
 			ctx := execution.NewContext(S)
 			if sm.timeout != 0 {
 				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
 			}
-			defer ctx.Cancel()
+			// Let's handle the request
 			vh.head.ServeHTTP(ctx, w, req)
+			// Let's cleanup
+			ctx.Cancel()
+			S.Clear()
+			sm.pool.Put(S)
+
 		case "OPTIONS":
-			S := sac.New(sm.pool)
+			// Let's create the datastore and then the execution context
+			rawS := sm.pool.Get()
+			S := rawS.(*sac.Instance)
 			ctx := execution.NewContext(S)
 			if sm.timeout != 0 {
 				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
 			}
-			defer ctx.Cancel()
+			// Let's handle the request
 			vh.options.ServeHTTP(ctx, w, req)
+			// Let's cleanup
+			ctx.Cancel()
+			S.Clear()
+			sm.pool.Put(S)
+
 		case "CONNECT":
-			S := sac.New(sm.pool)
+			// Let's create the datastore and then the execution context
+			rawS := sm.pool.Get()
+			S := rawS.(*sac.Instance)
 			ctx := execution.NewContext(S)
 			if sm.timeout != 0 {
 				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
 			}
-			defer ctx.Cancel()
+			// Let's handle the request
 			vh.connect.ServeHTTP(ctx, w, req)
+			// Let's cleanup
+			ctx.Cancel()
+			S.Clear()
+			sm.pool.Put(S)
+
 		case "TRACE":
-			S := sac.New(sm.pool)
+			// Let's create the datastore and then the execution context
+			rawS := sm.pool.Get()
+			S := rawS.(*sac.Instance)
 			ctx := execution.NewContext(S)
 			if sm.timeout != 0 {
 				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
 			}
-			defer ctx.Cancel()
+			// Let's handle the request
 			vh.trace.ServeHTTP(ctx, w, req)
+			// Let's cleanup
+			ctx.Cancel()
+			S.Clear()
+			sm.pool.Put(S)
 		default:
 			http.Error(w, http.StatusText(405), 405)
 		}
