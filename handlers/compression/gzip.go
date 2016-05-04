@@ -92,6 +92,7 @@ func (g Gzipper) ServeHTTP(ctx execution.Context, w http.ResponseWriter, req *ht
 		if g.next != nil {
 			g.next.ServeHTTP(ctx, w, req)
 		}
+		return
 	}
 	// We create a compressingWriter that will enable
 	//the response writing w/ Compression.
@@ -102,8 +103,9 @@ func (g Gzipper) ServeHTTP(ctx execution.Context, w http.ResponseWriter, req *ht
 		if g.next != nil {
 			g.next.ServeHTTP(ctx, w, req)
 		}
+		return
 	}
-	w.Header().Set("Content-Encoding", "gzip")
+	wc.Header().Set("Content-Encoding", "gzip")
 	// All the conditions are present : we shall compress the data before writing
 	// it out.
 	if g.next != nil {
@@ -111,6 +113,7 @@ func (g Gzipper) ServeHTTP(ctx execution.Context, w http.ResponseWriter, req *ht
 	}
 	err := wc.Close()
 	if err != nil {
+		ctx.Cancel()
 		panic(err)
 	}
 }

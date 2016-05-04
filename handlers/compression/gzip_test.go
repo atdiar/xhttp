@@ -1,6 +1,7 @@
 package compression
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -11,7 +12,8 @@ import (
 )
 
 const (
-	Payload = "eightsix\n"
+	Payload    = "eightsix\n"
+	LenPayload = len(Payload)
 )
 
 func ServeMux() xhttp.ServeMux {
@@ -26,14 +28,15 @@ func ServeMux() xhttp.ServeMux {
 	mux.USE(compressor)
 
 	mux.GET("/", xhttp.HandlerFunc(func(ctx execution.Context, res http.ResponseWriter, req *http.Request) {
-		res.Header().Set("Content-Length", strconv.Itoa(9*1024))
+		res.Header().Set("Content-Length", strconv.Itoa(LenPayload*1024))
 		for i := 0; i < 1024; i++ {
 			res.Write([]byte(Payload))
 		}
 	}))
 
 	mux.POST("/", xhttp.HandlerFunc(func(ctx execution.Context, res http.ResponseWriter, req *http.Request) {
-		res.Header().Set("Content-Length", strconv.Itoa(9*1024))
+		res.Header().Set("Content-Length", strconv.Itoa(LenPayload*1024))
+
 		for i := 0; i < 1024; i++ {
 			res.Write([]byte(Payload))
 		}
@@ -47,7 +50,7 @@ func TestCompressHandler(t *testing.T) {
 	mux := ServeMux()
 
 	// Request definition
-	req, err := http.NewRequest("GET", "http://example.com/foo", nil)
+	req, err := http.NewRequest("GET", "http://example.com/", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,13 +73,12 @@ func TestCompressHandler(t *testing.T) {
 	if l := w.HeaderMap.Get("Content-Length"); l != "" {
 		t.Errorf("wrong content-length. got %q expected %q", l, "")
 	}
-
 	// Second request is a POST request.
 	// As defined, the compressing handler ignores this verb.
 	// The response to a POST request shall not be compressed.
 
 	// Request definition
-	req, err = http.NewRequest("POST", "http://example.com/", nil)
+	req, err = http.NewRequest("POST", "http://example.com/foo", nil)
 	if err != nil {
 		t.Error(err)
 	}
@@ -85,18 +87,20 @@ func TestCompressHandler(t *testing.T) {
 	// Response recording
 	w = httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
+	t.Log(w.Header())
 
 	// Testing that the response is correctly sent.
 	if enc := w.HeaderMap.Get("Content-Encoding"); enc != "" {
 		t.Errorf("wrong content encoding, got %q want %q", enc, "")
 	}
-	if ct := w.HeaderMap.Get("Content-Type"); ct != "" {
+	if ct := w.HeaderMap.Get("Content-Type"); ct != "text/plain; charset=utf-8" {
 		t.Errorf("wrong content type, got %q want %q", ct, "")
 	}
-	if w.Body.Len() != 1024*9 {
-		t.Errorf("wrong len, got %d want %d", w.Body.Len(), 1024*9)
+	fmt.Println(w.Body)
+	if w.Body.Len() != 1024*LenPayload {
+		t.Errorf("wrong len, got %d want %d", w.Body.Len(), 1024*LenPayload)
 	}
 	if l := w.HeaderMap.Get("Content-Length"); l != "9216" {
-		t.Errorf("wrong content-length. got %q expected %d", l, 1024*9)
+		t.Errorf("wrong content-length. got %q expected %d", l, 1024*LenPayload)
 	}
 }
