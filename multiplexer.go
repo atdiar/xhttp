@@ -26,8 +26,8 @@ type option func(*ServeMux)
 // ChangeMux returns a configuration option for the ServeMux constructor
 // which enables the choice of an alternate Muxer.
 func ChangeMux(mux *http.ServeMux) func(*ServeMux) {
-	return func(i *ServeMux) {
-		i.ServeMux = mux
+	return func(s *ServeMux) {
+		s.ServeMux = mux
 	}
 }
 
