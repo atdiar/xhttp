@@ -28,8 +28,11 @@ mux.USE(compressor)
 ```
 ##Dependencies
 
-[xhttp package]:http://github.com/atdiar/xhttp
-[execution package]:http://github.com/atdiar/goroutine/execution
+[Package xhttp]
+[Package goroutine/execution]:
 
 These are the only two external dependencies required as they are necessary
-to take into account the execution context of a request handling goroutine.
+to take into account the execution context of a request-handling goroutine.
+
+[Package xhttp]:http://github.com/atdiar/xhttp
+[Package goroutine/execution]:http://github.com/atdiar/goroutine/execution
