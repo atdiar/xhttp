@@ -1,27 +1,36 @@
-// Package compression defines a handler of incoming http requests
-// which compresses the body of the response sent to the client.
+// Package compression defines a response compressing Handler.
+// It compresses the body of the http response sent back to a client.
 package compression
 
 import (
 	"compress/gzip"
-	"github.com/atdiar/context"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 	"sync"
+
+	"github.com/atdiar/goroutine/execution"
+	"github.com/atdiar/xhttp"
 )
 
-// Handler defines the structure of the response compressing handler.
-type Handler struct {
-	pool *sync.Pool
+// Gzipper defines the structure of the response compressing Handler.
+type Gzipper struct {
+	pool *sync.Pool // useful here to recycle gzip buffers
 	skip map[string]bool
+	next xhttp.Handler
 }
 
-// New returns a compressing xhttp.Handler object.
-func New() Handler {
-	h := Handler{}
-	h.skip = map[string]bool{
+// CallNext registers a next request Handler to be called by ServeHTTP method.
+// It returns the linked reqest Handlers.
+func (g Gzipper) CallNext(h xhttp.Handler) xhttp.HandlerLinker {
+	g.next = h
+	return g
+}
+
+// NewHandler returns a response compressing Handler.
+func NewHandler() Gzipper {
+	g := Gzipper{}
+	g.skip = map[string]bool{
 		"GET":     false,
 		"POST":    false,
 		"PUT":     false,
@@ -30,32 +39,25 @@ func New() Handler {
 		"HEAD":    false,
 		"OPTIONS": false,
 	}
-	h.pool = &sync.Pool{New: func() interface{} { return gzip.NewWriter(nil) }}
-	return h
+	g.pool = &sync.Pool{New: func() interface{} { return gzip.NewWriter(nil) }}
+	return g
 }
 
 // Skip is used to disable gzip compression for a given http method.
-func (h Handler) Skip(method string) Handler {
-	if _, ok := h.skip[strings.ToUpper(method)]; !ok {
-		log.Panicf("%s is not a valid method", method)
+func (g Gzipper) Skip(method string) Gzipper {
+	if _, ok := g.skip[strings.ToUpper(method)]; !ok {
+		panic(method + " is not a valid method")
 	}
-	h.skip[method] = true
-	return h
+	g.skip[method] = true
+	return g
 }
 
-// This is a wrapper around a http.ResponseWriter.
-// It implements the xhttp.RWWrapper interface.
+// This is a type of wrapper around a http.ResponseWriter which buffers data
+// before compressing the whole and writing.
 type compressingWriter struct {
 	io.WriteCloser
 	http.ResponseWriter
 	p *sync.Pool
-}
-
-// Unwrap is the exported method implemented by wrappers around
-// http.ResponseWriter objects.
-// It returns the wrappee.
-func (cw compressingWriter) Unwrap() http.ResponseWriter {
-	return cw.ResponseWriter
 }
 
 func newcompressingWriter(w http.ResponseWriter, p *sync.Pool) compressingWriter {
@@ -85,29 +87,30 @@ func (cw compressingWriter) Close() error {
 
 // ServeHTTP handles a http.Request by gzipping the http response body and
 // setting the right http Headers.
-func (h Handler) ServeHTTP(res http.ResponseWriter, req *http.Request, ctx context.Object) (http.ResponseWriter, bool) {
-	if mustSkip, exist := h.skip[req.Method]; exist && mustSkip {
-		return res, false
+func (g Gzipper) ServeHTTP(ctx execution.Context, w http.ResponseWriter, req *http.Request) {
+	if mustSkip, exist := g.skip[strings.ToUpper(req.Method)]; exist && mustSkip {
+		if g.next != nil {
+			g.next.ServeHTTP(ctx, w, req)
+		}
 	}
 	// We create a compressingWriter that will enable
 	//the response writing w/ Compression.
-	wc := newcompressingWriter(res, h.pool)
+	wc := newcompressingWriter(w, g.pool)
 
-	res.Header().Add("Vary", "Accept-Encoding")
+	w.Header().Add("Vary", "Accept-Encoding")
 	if !strings.Contains(req.Header.Get("Accept-Encoding"), "gzip") {
-		return res, false
+		if g.next != nil {
+			g.next.ServeHTTP(ctx, w, req)
+		}
 	}
-	res.Header().Set("Content-Encoding", "gzip")
-
-	return wc, false
-}
-
-// Finalize flushes the response to the underlying buffer.
-// (If the response happens to have been compressed.)
-func (h Handler) Finalize(w http.ResponseWriter, r *http.Request, ctx context.Object) error {
-	cw, ok := w.(compressingWriter)
-	if !ok {
-		return nil
+	w.Header().Set("Content-Encoding", "gzip")
+	// All the conditions are present : we shall compress the data before writing
+	// it out.
+	if g.next != nil {
+		g.next.ServeHTTP(ctx, wc, req)
 	}
-	return cw.Close()
+	err := wc.Close()
+	if err != nil {
+		panic(err)
+	}
 }

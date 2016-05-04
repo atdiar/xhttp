@@ -1,48 +1,50 @@
 package compression
 
 import (
-	"github.com/atdiar/xhttp"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"testing"
+
+	"github.com/atdiar/goroutine/execution"
+	"github.com/atdiar/xhttp"
 )
 
 const (
 	Payload = "eightsix\n"
 )
 
-func Router() xhttp.Router {
+func ServeMux() xhttp.ServeMux {
 	// Let's define a router that compresses the response
 	// except for POST requests.
 	// The response is just the aforementionned payload
 	// concatenated 1024 times.
-	r := xhttp.NewRouter()
+	mux := xhttp.NewServeMux()
 
-	compressor := New().Skip("POST")
+	compressor := NewHandler().Skip("POST")
 
-	r.Use(compressor)
+	mux.USE(compressor)
 
-	r.GET("/", xhttp.ConvertFunc(func(res http.ResponseWriter, req *http.Request) {
+	mux.GET("/", xhttp.HandlerFunc(func(ctx execution.Context, res http.ResponseWriter, req *http.Request) {
 		res.Header().Set("Content-Length", strconv.Itoa(9*1024))
 		for i := 0; i < 1024; i++ {
 			res.Write([]byte(Payload))
 		}
 	}))
 
-	r.POST("/", xhttp.ConvertFunc(func(res http.ResponseWriter, req *http.Request) {
+	mux.POST("/", xhttp.HandlerFunc(func(ctx execution.Context, res http.ResponseWriter, req *http.Request) {
 		res.Header().Set("Content-Length", strconv.Itoa(9*1024))
 		for i := 0; i < 1024; i++ {
 			res.Write([]byte(Payload))
 		}
 	}))
 
-	return r
+	return mux
 }
 
 func TestCompressHandler(t *testing.T) {
 	// Handler instantiation
-	r := Router()
+	mux := ServeMux()
 
 	// Request definition
 	req, err := http.NewRequest("GET", "http://example.com/foo", nil)
@@ -53,7 +55,7 @@ func TestCompressHandler(t *testing.T) {
 
 	// Response recording
 	w := httptest.NewRecorder()
-	r.ServeHTTP(w, req)
+	mux.ServeHTTP(w, req)
 
 	// Testing that the response is correctly sent.
 	if w.HeaderMap.Get("Content-Encoding") != "gzip" {
@@ -75,11 +77,14 @@ func TestCompressHandler(t *testing.T) {
 
 	// Request definition
 	req, err = http.NewRequest("POST", "http://example.com/", nil)
+	if err != nil {
+		t.Error(err)
+	}
 	req.Header.Add("Accept-Encoding", "gzip")
 
 	// Response recording
 	w = httptest.NewRecorder()
-	r.ServeHTTP(w, req)
+	mux.ServeHTTP(w, req)
 
 	// Testing that the response is correctly sent.
 	if enc := w.HeaderMap.Get("Content-Encoding"); enc != "" {
