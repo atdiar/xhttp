@@ -253,10 +253,8 @@ func (t *transformationHandler) register(h Handler) {
 }
 
 func (t *transformationHandler) prepend(h HandlerLinker) {
-	if h != nil && t.input != nil {
+	if h != nil {
 		t.Handler = h.CallNext(t.input)
-	} else {
-		panic("Nil handlers can't be linked together.")
 	}
 }
 
