@@ -39,8 +39,9 @@ func SetTimeout(t time.Duration) func(*ServeMux) {
 	}
 }
 
-// NewServeMux creates a new multiplexer which holds the request servicing logic.
-// The mux used by default is http.DefaultServeMux.
+// NewServeMux creates a new multiplexer wrapper which holds the request
+// servicing logic.
+// The mux wrapped by default is http.DefaultServeMux.
 // That can be changed by using the ChangeMux configuration option.
 func NewServeMux(options ...option) ServeMux {
 	sm := ServeMux{}
