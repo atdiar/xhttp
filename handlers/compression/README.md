@@ -8,7 +8,7 @@ This package defines a request handler in charge of gzip compressing the
 It conforms to the signature of linkable handlers as defined by the xhttp
 package, by implementing the xhttp.HandlerLinker interface.
 
-It is possible to disable gzip compression per request in order to avoid some
+It is possible to disable gzip compression for some request methods in order to avoid some
 CSRF vulnerabilities.
 
 ##How to use it?
