@@ -4,7 +4,7 @@
 
 ##Description
 
-This package defines a wrapper around the http.ServeMux that can be found
+This package defines a wrapper around `*http.ServeMux` that can be found
 in Go's Standard library. The goal is to provide convenience methods to
 register request handlers and facilitate the usage of an execution context
 per goroutine spawned (whcih should be the norm).
@@ -54,7 +54,7 @@ func (hl xhttp.Handlerlinker) CallNext(n Handler) HandlerLinker
 
 ##Convenience methods
 
-As a wrapper around the Muxer, we have defined several methods that should
+As a wrapper around `*http.ServeMux`, we have defined several methods that should
 render the task of registering request handlers per route or verb easier.
 
 Typically, registration is as simple as defining a handler and using it
