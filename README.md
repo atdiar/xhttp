@@ -22,7 +22,7 @@ Lastly, two new interfaces are defined:
 
 An xhttp.Handler differs from the traditional http.Handler by the signature
 of its ServeHTTP method: it demands to be provided with one more argument
-which is an 'execution.Context'.
+which is an `execution.Context`.
 
 ``` go
 // NOTE: this is pseudo go code to illustrate the method signatures.
@@ -67,7 +67,7 @@ s.GET("/foo",someHandler)
 where someHandler implements the Handler interface.
 
 To register handlers that apply regardless of the request verb, the USE
-variadic method, which accepts linkable Handlers exists :
+variadic method, which accepts linkable Handlers, exists :
 
 ``` go
 s.USE(handlerlinkerA,handlerlinkerB,handlerlinkerC,...)
@@ -89,7 +89,7 @@ reqHandler := xhttp.Link(hlinkerA, hlinkerB, hlinkerC).CallNext(Handler)
 
 ##Basic Handlers
 
-The `/handler` subfolder contains some general use request handlers
+The `/handler/` subfolder contains some general use request handlers
 for response compression, CSRF protection, session management,...
 
 ## License
