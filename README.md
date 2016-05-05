@@ -73,7 +73,7 @@ To register handlers that apply regardless of the request verb, the USE
 variadic method, which accepts linkable Handlers, exists :
 
 ``` go
-s.USE(handlerlinkerA,handlerlinkerB,handlerlinkerC,...)
+s.USE(handlerlinkerA, handlerlinkerB, handlerlinkerC)
 // Calling it again will queue another handler to the previous list
 // For instance here, handlerlinkerD will be called right after
 // handlerlinkerC
