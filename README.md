@@ -17,8 +17,8 @@ subtasks that would be launched on behalf of the request handling goroutine.
 Convenience methods for request handler registration are also provided.
 
 Lastly, two new interfaces are defined:
-* 'xhttp.Handler'
-* 'xhttp.HandlerLinker' (linkable request Handler a.k.a. middleware)
+* `xhttp.Handler`
+* `xhttp.HandlerLinker` (linkable request Handler a.k.a. middleware)
 
 An xhttp.Handler differs from the traditional http.Handler by the signature
 of its ServeHTTP method: it demands to be provided with one more argument
@@ -39,7 +39,7 @@ func (h http.Handler) ServeHTTP(w http.ResponseWriter, r *http.Request)
 func (h xhttp.Handler) ServeHTTP(ctx execution.Context, w http.ResponseWriter, r *http.Request)
 
 ```
-It also defines HandlerLinker :an interface implemented by Handler types
+It also defines HandlerLinker: an interface implemented by Handler types
 that are linkable.
 By linkable, we mean that these request handlers can be used to form a
 chain through which a request can be processed.
@@ -89,7 +89,7 @@ reqHandler := xhttp.Link(hlinkerA, hlinkerB, hlinkerC).CallNext(Handler)
 
 ##Basic Handlers
 
-The '/handler' subfolder contains some general use request handlers
+The `/handler` subfolder contains some general use request handlers
 for response compression, CSRF protection, session management,...
 
 ## License
