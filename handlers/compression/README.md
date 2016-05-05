@@ -21,7 +21,7 @@ Below, is a contrieved example (the imports are not showed)
 
 mux := xhttp.NewServeMux()
 
-compressor := NewHandler().Skip("POST")
+compressor := compression.NewHandler().Skip("POST")
 
 mux.USE(compressor)
 

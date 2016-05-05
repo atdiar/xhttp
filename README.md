@@ -47,9 +47,11 @@ chain through which a request can be processed.
 ``` go
 // From the xhttp package
 func (hl xhttp.Handlerlinker) ServeHTTP(ctx execution.Context, w http.ResponseWriter, r *http.Request)
+
 // CallNext is used to register the successor Handler and returns
 // the result of the linking. Implementing HandlerLinker is implementing Handler.
 func (hl xhttp.Handlerlinker) CallNext(n Handler) HandlerLinker
+
 ```
 
 ##Convenience methods
