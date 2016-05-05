@@ -4,10 +4,10 @@
 
 ##Description
 
-This package defines a wrapper around `*http.ServeMux` that can be found
+This package defines a wrapper around the `*http.ServeMux` that can be found
 in Go's Standard library. The goal is to provide convenience methods to
 register request handlers and facilitate the usage of an execution context
-per goroutine spawned (whcih should be the norm).
+per goroutine spawned (which should be the norm).
 
 ##What are the main additions compared to net/http?
 
