@@ -42,15 +42,15 @@ func (h xhttp.Handler) ServeHTTP(ctx execution.Context, w http.ResponseWriter, r
 It also defines HandlerLinker: an interface implemented by Handler types
 that are linkable.
 By linkable, we mean that these request handlers can be used to form a
-chain through which a request can be processed.
+chain link through which a request can be processed.
 
 ``` go
 // From the xhttp package
-func (hl xhttp.Handlerlinker) ServeHTTP(ctx execution.Context, w http.ResponseWriter, r *http.Request)
+func (hl xhttp.HandlerLinker) ServeHTTP(ctx execution.Context, w http.ResponseWriter, r *http.Request)
 
 // CallNext is used to register the successor Handler and returns
-// the result of the linking. Implementing HandlerLinker is implementing Handler.
-func (hl xhttp.Handlerlinker) CallNext(n Handler) HandlerLinker
+// the result of the linking. Implementing HandlerLinker means implementing Handler.
+func (hl xhttp.HandlerLinker) CallNext(h Handler) HandlerLinker
 
 ```
 
@@ -65,8 +65,9 @@ as argument to one of such methods :
 s := xhttp.NewServeMux()
 
 s.GET("/foo",someHandler)
+s.PUT("/bar/", someOtherHandler)
 ```
-where someHandler implements the Handler interface.
+where someHandler and someOtherHandler implements the Handler interface.
 
 To register handlers that apply regardless of the request verb, the USE
 variadic method, which accepts linkable Handlers, exists :
