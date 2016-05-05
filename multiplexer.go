@@ -425,7 +425,12 @@ func (sm *ServeMux) TRACE(pattern string, h Handler) {
 // USE registers linkable request Handlers (i.e. implementing HandlerLinker)
 // which shall be servicing any path, regardless of the request method.
 func (sm *ServeMux) USE(handlers ...HandlerLinker) {
-	sm.catchAll = Link(handlers...)
+	link := Link(handlers...)
+	if sm.catchAll != nil {
+		sm.catchAll.CallNext(link)
+	} else {
+		sm.catchAll = link
+	}
 	for method, vh := range sm.handlers {
 		vh.prepend(sm.catchAll)
 		sm.handlers[method] = vh
