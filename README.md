@@ -18,76 +18,69 @@ Convenience methods for request handler registration are also provided.
 
 Lastly, two new interfaces are defined:
 * `xhttp.Handler`
-* `xhttp.HandlerLinker` (linkable request Handler a.k.a. middleware)
+* `xhttp.HandlerLinker`
 
-An xhttp.Handler differs from the traditional http.Handler by the signature
+An `xhttp.Handler` differs from the traditional http.Handler by the signature
 of its ServeHTTP method: it demands to be provided with one more argument
 which is an `execution.Context`.
 
-``` go
-// NOTE: this is pseudo go code to illustrate the method signatures.
-// It does not compile.
-import(
-  "github.com/atdiar/goroutine/execution"
-  "github.com/atdiar/xhttp"
-  "net/http"
-)
- // From the standard library
-func (h http.Handler) ServeHTTP(w http.ResponseWriter, r *http.Request)
-
-// From the xhttp package
-func (h xhttp.Handler) ServeHTTP(ctx execution.Context, w http.ResponseWriter, r *http.Request)
-
-```
-It also defines HandlerLinker: an interface implemented by Handler types
-that are linkable.
-By linkable, we mean that these request handlers can be used to form a
-chain link through which a request can be processed.
+An `xhttp.HandlerLinker` enables the linking of two Handler objects so that one
+can call the other. By recursion, it allows to create a linked list (chain) of
+handlers.
 
 ``` go
-// From the xhttp package
-func (hl xhttp.HandlerLinker) ServeHTTP(ctx execution.Context, w http.ResponseWriter, r *http.Request)
 
-// CallNext is used to register the successor Handler and returns
-// the result of the linking. Implementing HandlerLinker means implementing Handler.
-func (hl xhttp.HandlerLinker) CallNext(h Handler) HandlerLinker
+ // Handler ServeHTTP signature from the standard library.
+ServeHTTP(w http.ResponseWriter, r *http.Request)
+
+// Handler ServeHTTP signature from the xhttp package.
+ServeHTTP(ctx execution.Context, w http.ResponseWriter, r *http.Request)
+
+// HandlerLinker ServeHTTP and CallNext signatures from the xhttp package.
+ServeHTTP(ctx execution.Context, w http.ResponseWriter, r *http.Request)
+CallNext(h Handler) HandlerLinker
 
 ```
 
 ##Convenience methods
 
-As a wrapper around `*http.ServeMux`, we have defined several methods that should
-render the task of registering request handlers per route or verb easier.
+As a wrapper around `*http.ServeMux`, we have defined several methods that
+should render the task of registering request handlers per route and verb easier.
 
-Typically, registration is as simple as defining a handler and using it
-as argument to one of such methods :
+Registration consists in defining a handler and using it
+as argument.
+
 ``` go
 s := xhttp.NewServeMux()
 
 s.GET("/foo",someHandler)
 s.PUT("/bar/", someOtherHandler)
+
 ```
 where someHandler and someOtherHandler implements the Handler interface.
 
 To register handlers that apply regardless of the request verb, the USE
-variadic method, which accepts linkable Handlers, exists :
+variadic method, which accepts HandlerLinkers as arguments, exists :
 
 ``` go
+
 s.USE(handlerlinkerA, handlerlinkerB, handlerlinkerC)
 // Calling it again will queue another handler to the previous list
 // For instance here, handlerlinkerD will be called right after
 // handlerlinkerC
 s.USE(handlerlinkerD)
+
 ```
 
 ##More about chaining/linking Handler objects
 
 If a given route & request.Method requires a response to be processed
-by a chain of handlers, the 'xhttp.Link' function should be used.
-It allows to define the resulting handler as such :
+by a chain of handlers, the `xhttp.Link` function can be used to create such
+a chain.
 
 ``` go
-reqHandler := xhttp.Link(hlinkerA, hlinkerB, hlinkerC).CallNext(Handler)
+postHandler := xhttp.Link(hlinkerA, hlinkerB, hlinkerC).CallNext(Handler)
+s.POST("/foobar", postHandler)
 ```
 
 ##Basic Handlers
