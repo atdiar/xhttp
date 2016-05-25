@@ -1,4 +1,4 @@
-// Package session defines a request handler that helps the instantiation
+// Package session defines a request handler that helps for the instantiation
 // of client/server sessions.
 package session
 
@@ -81,8 +81,8 @@ type Store interface {
 	SetExpiry(id string, t time.Duration) error
 }
 
-// Key is a bland empty struct type used to identify specifically the type of
-// entries in a context datastore where session data shall be found.
+// Key is a type that allows to define a specific Key to be used in Key/Value
+// stores to save/retrieve a session.
 type Key struct{}
 
 // Handler defines a type for request handling objects in charge of
