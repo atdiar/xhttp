@@ -16,12 +16,13 @@ type Handler interface {
 	ServeHTTP(ctx execution.Context, w http.ResponseWriter, r *http.Request)
 }
 
-// HandlerLinker is the interface of a request Handler to whcih we can link a
-// CallNext Handler to be called as its successor in a chain.
-// The CallNext method returns the fully linked Handler as a HandlerLinker.
+// HandlerLinker is the interface of a request Handler to which we can attach
+// another Handler. It enables the ServeHTTP method of the attached handler to
+// be called from the ServeHTTP method of the first handler, if needed.
+// The Link method returns the fully linked HandlerLinker.
 type HandlerLinker interface {
 	ServeHTTP(ctx execution.Context, w http.ResponseWriter, r *http.Request)
-	CallNext(Handler) HandlerLinker
+	Link(Handler) HandlerLinker
 }
 
 // HandlerFunc defines a type of functions implementing the Handler interface.

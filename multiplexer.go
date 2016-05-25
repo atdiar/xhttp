@@ -254,7 +254,7 @@ func (t *transformationHandler) register(h Handler) {
 
 func (t *transformationHandler) prepend(h HandlerLinker) {
 	if h != nil {
-		t.Handler = h.CallNext(t.input)
+		t.Handler = h.Link(t.input)
 	}
 }
 
@@ -425,9 +425,9 @@ func (sm *ServeMux) TRACE(pattern string, h Handler) {
 // USE registers linkable request Handlers (i.e. implementing HandlerLinker)
 // which shall be servicing any path, regardless of the request method.
 func (sm *ServeMux) USE(handlers ...HandlerLinker) {
-	link := Link(handlers...)
+	link := Chain(handlers...)
 	if sm.catchAll != nil {
-		sm.catchAll.CallNext(link)
+		sm.catchAll.Link(link)
 	} else {
 		sm.catchAll = link
 	}
@@ -437,10 +437,10 @@ func (sm *ServeMux) USE(handlers ...HandlerLinker) {
 	}
 }
 
-// Link is a function that is used to create a chain of Handlers when provided
+// Chain is a function that is used to create a chain of Handlers when provided
 // with linkable Handlers (they must implement HandlerLinker).
 // It returns the first link of the chain.
-func Link(handlers ...HandlerLinker) HandlerLinker {
+func Chain(handlers ...HandlerLinker) HandlerLinker {
 	l := len(handlers)
 
 	if l == 0 {
@@ -449,9 +449,9 @@ func Link(handlers ...HandlerLinker) HandlerLinker {
 
 	if l > 1 {
 		// Starting from the penultimate element, we link the handlers using the
-		// CallNext registration method.
+		// Link registration method.
 		for i := range handlers[:l-2] {
-			h := handlers[l-2-i].CallNext(handlers[l-1-i])
+			h := handlers[l-2-i].Link(handlers[l-1-i])
 			handlers[l-2-i] = h
 		}
 	}

@@ -50,7 +50,7 @@ func (m middlewareExample) ServeHTTP(ctx execution.Context, w http.ResponseWrite
 	}
 }
 
-func (m middlewareExample) CallNext(h xhttp.Handler) xhttp.HandlerLinker {
+func (m middlewareExample) Link(h xhttp.Handler) xhttp.HandlerLinker {
 	m.next = h
 	return m
 }

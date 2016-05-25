@@ -36,9 +36,9 @@ ServeHTTP(w http.ResponseWriter, r *http.Request)
 // Handler ServeHTTP signature from the xhttp package.
 ServeHTTP(ctx execution.Context, w http.ResponseWriter, r *http.Request)
 
-// HandlerLinker ServeHTTP and CallNext signatures from the xhttp package.
+// HandlerLinker ServeHTTP and Link signatures from the xhttp package.
 ServeHTTP(ctx execution.Context, w http.ResponseWriter, r *http.Request)
-CallNext(h Handler) HandlerLinker
+Link(h Handler) HandlerLinker
 
 ```
 
@@ -57,10 +57,10 @@ s.GET("/foo",someHandler)
 s.PUT("/bar/", someOtherHandler)
 
 ```
-where someHandler and someOtherHandler implements the Handler interface.
+where someHandler and someOtherHandler implement the Handler interface.
 
-To register handlers that apply regardless of the request verb, the USE
-variadic method, which accepts HandlerLinkers as arguments, exists :
+To register handlers that apply regardless of the request verb, the `USE`
+variadic method, which accepts linkable handlers as arguments, exists :
 
 ``` go
 
@@ -75,11 +75,11 @@ s.USE(handlerlinkerD)
 ##More about chaining/linking Handler objects
 
 If a given route & request.Method requires a response to be processed
-by a chain of handlers, the `xhttp.Link` function can be used to create such
+by a chain of handlers, the `xhttp.Chain` function can be used to create such
 a chain.
 
 ``` go
-postHandler := xhttp.Link(hlinkerA, hlinkerB, hlinkerC).CallNext(Handler)
+postHandler := xhttp.Chain(hlinkerA, hlinkerB, hlinkerC).Link(Handler)
 s.POST("/foobar", postHandler)
 ```
 
