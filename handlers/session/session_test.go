@@ -1,33 +1,34 @@
 package session
 
 import (
-	"github.com/atdiar/context"
-	"github.com/atdiar/xhttp"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/atdiar/goroutine/execution"
+	"github.com/atdiar/localmemstore"
+	"github.com/atdiar/xhttp"
 )
 
 const (
 	Payload = "ok\n"
 )
 
-func Router() xhttp.Router {
+func Multiplexer() xhttp.ServeMux {
 
-	r := xhttp.NewRouter()
+	r := xhttp.NewServeMux()
 
-	sessionhandler := New("thiusedfrtgju8975bj", DefaultStore)
-	r.Use(sessionhandler)
+	sessionhandler := New("thiusedfrtgju8975bj", localmemstore.New())
+	r.USE(sessionhandler)
 
-	r.GET("/", xhttp.HandlerFunc(func(res http.ResponseWriter, req *http.Request, ctx context.Object) (http.ResponseWriter, bool) {
+	r.GET("/", xhttp.HandlerFunc(func(ctx execution.Context, res http.ResponseWriter, req *http.Request) {
 		res.Write([]byte(Payload))
-		return res, false
 	}))
 	return r
 }
 
 func TestSession(t *testing.T) {
-	r := Router()
+	r := Multiplexer()
 
 	// Request definition
 	req, err := http.NewRequest("GET", "http://example.com/foo", nil)

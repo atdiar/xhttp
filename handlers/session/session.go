@@ -3,12 +3,20 @@
 package session
 
 /*
-File description
+Package description
+===================
 
-The session package contains two files(session.go and localmemstore.go).
+The session package contains three files:
 
-session.go defines a http request handler type which creates a session per
+* session.go
+* metadata.go
+* localmemstore.go
+
+session.go defines a xhttp.Handler type which creates a session per
 request.
+
+metadata.go defines the format of session data that is marshalled/unmarshalled
+to/from the session cookie.
 
 localstorage.go defines a simple implementation of a session store for
 development purpose. It should not be used in production.
@@ -18,33 +26,41 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
-	"github.com/atdiar/context"
-	"github.com/satori/go.uuid"
 	"log"
 	"net/http"
-	"strings"
-	"sync"
 	"time"
+
+	"github.com/atdiar/goroutine/execution"
+	"github.com/atdiar/localmemstore"
+	"github.com/atdiar/xhttp"
+	"github.com/satori/go.uuid"
 )
 
 // TODO :
 // - logging
 // - Tests
-// - Copyright Disclaimer
-// function for parameter initilization.. getter methods
+// build tag for localmemstore
+const (
+	maxInt32 = 1<<31 - 1
+	maxInt64 = 1<<63 - 1
+)
 
 var (
-	ERRNOID       = errors.New("No id or Invalid id")
-	ERRBADSESSION = errors.New("Session Compromised")
-	ERRBADCOOKIE  = errors.New("Bad session cookie. Retry.")
-	ERRBADSTORAGE = errors.New("Invalid storage")
-	ERREXPIRED    = errors.New("Session has expired")
+	// ErrNoID is returned when no session ID was found or the value was invalid.
+	ErrNoID = errors.New("No id or Invalid id.")
+	// ErrBadSession is returned when the session is in an invalid state.
+	ErrBadSession = errors.New("Session may have been compromised or does not exist.")
+	// ErrBadCookie is returned when the session cookie is invalid.
+	ErrBadCookie = errors.New("Bad session cookie. Retry.")
+	// ErrBadStorage is returned when session storage is faulty.
+	ErrBadStorage = errors.New("Invalid storage.")
+	// ErrExpired is returned when the session has expired.
+	ErrExpired = errors.New("Session has expired.")
 )
 
 // Cache defines the interface that a session cache should implement.
-// Needs to be safe for concurrent use.
+// It should be made safe for concurrent use by multiple goroutines.
 type Cache interface {
 	Get(id, hkey string) (res []byte, err error)
 	Put(id string, hkey string, content []byte) error
@@ -52,61 +68,122 @@ type Cache interface {
 	Clear()
 }
 
-// Store defines the interface that a session store frontend should implement.
-// Needs to be safe for concurrent use.
+// Store defines the interface that a session store should implement.
+// It should be made safe for concurrent use by multiple goroutines.
+//
+// NOTE: Expire sets a timeout for the validity of a session.
+// if t = 0, the session should expire immediately.
+// if t < 0, the session does not expire.
 type Store interface {
 	Get(id, hkey string) (res []byte, err error)
 	Put(id string, hkey string, content []byte) error
 	Delete(id, hkey string) error
-
-	// Expire sets the time from Now in seconds after which the session
-	// should be considered stale.
-	// if t = 0, the session should expire immediately.
-	// if t < 0, the session does not expire.
-	Expire(id string, t int64) error
+	SetExpiry(id string, t time.Duration) error
 }
+
+// Key is a bland empty struct type used to identify specifically the type of
+// entries in a context datastore where session data shall be found.
+type Key struct{}
 
 // Handler defines a type for request handling objects in charge of
 // session instantiation and validation.
+//
+// The duration of a session server-side is not necessarily the same as the
+// duration of the session credentials stored by the client.
+// The latter is controlled by the MaxAge field of the session cookie.
 type Handler struct {
-	Params http.Cookie
+	// Cookie is a template that stores the configuration for the storage of the
+	// session object client-side.
+	Cookie http.Cookie
 	Secret string
-	Store  Store
-	Cache  Cache
 
-	Transience int // Max time in store for a browser session (maxAge = 0)
+	// Store is the interface implemented by server-side session stores.
+	// duration represents the default length of a session server-side.
+	// it may and probably is different from the cookie.Expire value that defines
+	// the duration of client side session storage.
+	Store    Store
+	duration time.Duration
 
-	metadata metadata
+	Cache Cache
+
+	uuidgen func() string
+
+	Data Data
+	next xhttp.Handler
 }
 
-// New returns a session handler initialized with defaults.
-func New(secret string, store Store) Handler {
+// Link enables the linking of a xhttp.Handler to the session Handler.
+func (h Handler) Link(hn xhttp.Handler) xhttp.HandlerLinker {
+	h.next = hn
+	return h
+}
+
+// New returns a request handler which implements a server session
+// initialized with defaults.
+func New(secret string, s Store) Handler {
 	h := Handler{}
 
 	// Defaults (session cookie by default)
-	h.Params.Name = "GSID"
-	h.Params.Path = "/"
-	h.Params.HttpOnly = true
-	h.Params.Secure = true
-	h.Params.MaxAge = 0 // session is invalidated after browser is closed.
-	h.Transience = 86400
+	h.Cookie.Name = "GSID"
+	h.Cookie.Path = "/"
+	h.Cookie.HttpOnly = true
+	h.Cookie.Secure = true
+	h.Cookie.MaxAge = 0 // session cookie is invalidated after browser is closed.
+	h.duration = 86400
 
-	if store == nil {
+	if s == nil {
 		panic("The provided session store is nil.")
 	}
-	h.Store = store
+	h.Store = s
 
-	h.Secret = "Alibaba loves Gombo soup ! Please change that bad secret !"
-	if len(secret) != 0 {
-		h.Secret = secret
+	if len(secret) == 0 {
+		panic("The secret cannot be an empty string.")
 	}
+	h.Secret = secret
 
-	h.metadata = newSessionData()
+	h.Data = newToken()
+
+	h.uuidgen = func() string {
+		return uuid.NewV4().String()
+	}
 
 	return h
 }
 
-// Session handler API
+// EnableCaching allows to specify cache storage for the session data.
+func (h Handler) EnableCaching(c Cache) Handler {
+	h.Cache = c
+	return h
+}
+
+// DisableCaching returns a new Handler with the caching disabled.
+func (h Handler) DisableCaching() Handler {
+	h.Cache = nil
+	return h
+}
+
+// SetDuration defines the default duration limit for the server-side
+// storage of session data.
+func (h Handler) SetDuration(t time.Duration) Handler {
+	h.duration = t
+	return h
+}
+
+// ChangeUUIDgen allows to change the unique session ID generator used.
+func (h Handler) ChangeUUIDgen(f func() string) Handler {
+	h.uuidgen = f
+	return h
+}
+
+// Key returns a value that is used to retrieve a saved session handler from
+// the per-request context datastore.
+func (h Handler) Key() Key {
+	return Key{}
+}
+
+// *****************************************************************************
+// Session handler UI
+// *****************************************************************************
 
 // Get will retrieve the value corresponding to a given store key from
 // the session store.
@@ -114,22 +191,22 @@ func New(secret string, store Store) Handler {
 func (h Handler) Get(key string) ([]byte, error) {
 
 	if h.Cache == nil {
-		return h.Store.Get(h.metadata.ID(), key)
+		return h.Store.Get(h.Data.GetID(), key)
 	}
 
-	res, err := h.Cache.Get(h.metadata.ID(), key)
+	res, err := h.Cache.Get(h.Data.GetID(), key)
 	if err == nil {
 		return res, nil
 	}
 
 	// On cache miss, we fetch from store and then try to update the cache
 	// with the result before returning it.
-	res, err = h.Store.Get(h.metadata.id, key)
+	res, err = h.Store.Get(h.Data.GetID(), key)
 	if err != nil {
 		return nil, err
 	}
 
-	err = h.Cache.Put(h.metadata.id, key, res)
+	err = h.Cache.Put(h.Data.GetID(), key, res)
 	if err != nil {
 		log.Print(err) // log that caching failed.. TODO: build/plug-in a more powerful error logging system/service interface.
 	}
@@ -140,7 +217,7 @@ func (h Handler) Get(key string) ([]byte, error) {
 // Put will save a key/value pair in the session store.
 func (h Handler) Put(key string, value []byte) error {
 
-	err := h.Store.Put(h.metadata.ID(), key, value)
+	err := h.Store.Put(h.Data.GetID(), key, value)
 	if err != nil {
 		return err
 	}
@@ -149,9 +226,9 @@ func (h Handler) Put(key string, value []byte) error {
 		return nil
 	}
 
-	err = h.Cache.Put(h.metadata.ID(), key, value)
+	err = h.Cache.Put(h.Data.GetID(), key, value)
 	if err != nil {
-		log.Print(err) // Putting a value into the cache may not succeed. It's OK. Just log it.
+		log.Print(err) // Putting a value into the cache may not succeed. It's OK. Just log it as weird behaviour.
 	}
 	return nil
 }
@@ -160,209 +237,148 @@ func (h Handler) Put(key string, value []byte) error {
 func (h Handler) Delete(key string) error {
 
 	if h.Cache == nil {
-		return h.Store.Delete(h.metadata.ID(), key)
+		return h.Store.Delete(h.Data.GetID(), key)
 	}
 
-	err := h.Cache.Delete(h.metadata.ID(), key) // Attempt to delete a value from cache MUST succeed.
+	err := h.Cache.Delete(h.Data.GetID(), key) // Attempt to delete a value from cache MUST succeed.
 	if err != nil {
-		log.Print(err)
+		// the receiver of this error should be able to deal with this.
+		// TODO add a method to return a handler with caching disabled.
 		return err
 	}
 
-	err = h.Store.Delete(h.metadata.ID(), key)
+	err = h.Store.Delete(h.Data.GetID(), key)
 	if err != nil {
-		return err
-	}
-	return nil
-}
-
-// Expire allows to set the duration we should wait before considering
-// the session stale.
-// if t < 0, the session expires immediately.
-// if t = 0, the session expires when the browser is closed.
-// if t > 0, the session expires after t seconds.
-func (h Handler) Expire(t int) error {
-	err := h.Store.Expire(h.metadata.ID(), int64(t))
-	if err != nil {
-		return err
-	}
-	h.Params.MaxAge = t
-	h.metadata.Update(true) // sentinel notifying that we should use generate to update session cookie.
-	return nil
-}
-
-// ID returns the session id of a user.
-func (h Handler) ID() string {
-	return h.metadata.ID()
-}
-
-// Expiry retrieves the session Expiration date.
-func (h Handler) Expiry() time.Time {
-	return h.metadata.Expiry()
-}
-
-// metadata is a type for the information stored in a sessioncookie.
-type metadata struct {
-	ID        string
-	Expiry    time.Time
-	Value     string
-	delimiter string
-	update    bool
-}
-
-// Key is the value that is used to retrieve a saved session handler from
-// the per-request context datastore.
-var Key metadata
-
-func newSessionData() metadata {
-	return metadata{
-		delimiter: ":", // should be sendable via cookie and not in base64 sigil list
-		update:    true,
-	}
-}
-
-func (session *metadata) ID() string {
-	return session.ID
-}
-
-func (session *metadata) SetID(s string) {
-	session.ID = s
-	update = true
-}
-
-func (session *metadata) Expiry() time.Time {
-	return session.Expiry
-}
-
-func (session *metadata) Expire(t time.Time) {
-	session.Expiry = t
-	update = true
-}
-
-func (session *metadata) Updated() bool {
-	return session.update
-}
-
-func (session *metadata) Update(b bool) {
-	session.update = b
-}
-
-func (token *metadata) Encode(secret string) string {
-	j, err := json.Marshal(token)
-	if err != nil {
-		log.Panic("JSON encoding internal failure. Exceptional behaviour while encoding session metadata.")
-	}
-	return computeHmac256(j, []byte(secret)) + token.delimiter + base64.StdEncoding.EncodeToString(j)
-}
-
-func (token *metadata) Decode(metadata string, secret string) error {
-	// let's split the two components on the string-marshalled metadata (raw + Encoded)
-	s := strings.Split(secret, token.delimiter)
-	if len(s) <= 1 || len(s) > 4096 {
-		panic("A surprising error occured. Bad session token.")
-	}
-
-	ok, err := VerifySignature(s[1], s[0], secret)
-	if !ok {
-		log.Println("Sessioncookie seems to have been tampered with.")
-		return ERRBADSESSION
-	}
-	str, err := base64.StdEncoding.DecodeString(s[1])
-	if err != nil {
-		return err
-	}
-
-	err = json.Unmarshal(str, token)
-	if err != nil {
-		log.Println("While Decoding metadata, JSON unmarshalling failed.")
 		return err
 	}
 	return nil
+}
+
+// SetExpiry sets the duration of a single user session.
+// On the server-side, the duration is set on the session storage.
+// On the client-side, the duration is set on the client cookie.
+//
+// Hence, this function mutates session data in a way that should eventually
+// be visible to the client.
+//
+// The rules are the following:
+// * if t <0, the session expires immediately.
+// * if t = 0, the session expires when the browser is closed. (browser session)
+// * if t > 0, the session expires after t seconds.
+func (h Handler) SetExpiry(t time.Duration) (Handler, error) {
+	// server-side
+	err := h.Store.SetExpiry(h.Data.GetID(), t)
+	if err != nil {
+		return h, err
+	}
+	// since cookie.MaxAge is an int type, we need to do a little gymnastic here
+	// to avoid overflow.
+	if t > maxInt32 {
+		t = maxInt32
+	}
+
+	// client side
+	h.Cookie.MaxAge = int(t)
+	d := time.Now().UTC().Add(t)
+	h.Cookie.Expires = d
+	h.Data.SetExpiry(d)
+
+	return h, nil
+}
+
+// SessionData returns the session data.
+func (h Handler) SessionData() Data {
+	return h.Data.Retrieve()
 }
 
 // Load will try to recover the session handler state if it was previously
 // handled. Otherwise, it will try loading the metadata directly from the request
 // object if it exists. If none works, an error is returned.
-func (h *Handler) Load(res http.ResponseWriter, req *http.Request, ctx context.Object) error {
-	v, err := ctx.Get(Key)
+// Not safe for concurrent use by multiple goroutines. (Would not make sense)
+func (h *Handler) Load(ctx execution.Context, res http.ResponseWriter, req *http.Request) error {
+	dt, err := ctx.Get(h.Key())
+
 	if err != nil {
-		reqc, err := req.Cookie(h.Params.Name)
+		// in this case, there is no session already laoded and saved.
+		// we try to retrieve a session cookie.
+		reqc, err := req.Cookie(h.Cookie.Name)
 		if err != nil {
-			return ERRNOID
+			return ErrBadSession
 		}
-		h.Params = *reqc
-		err = h.metadata.Decode(reqc.Value, h.Secret)
+		h.Cookie = *reqc
+		err = h.Data.Decode(reqc.Value, h.Secret)
 		if err != nil {
-			// TODO session is invalid. Maybe it has been tamperedw with
+			// TODO session is invalid. Maybe it has been tampered with
 			// log error and return invalid session error
-			return ERRNOID
+			return ErrBadCookie
 		}
-		h.Save(res, req, ctx)
+		h.Save(ctx, res, req)
 		return nil
 	}
-	oldsess, ok := v.(Handler)
-	if !ok {
-		panic("Something very odd happened. Session handler is of wrong type ?!.")
-	}
-
-	*h = oldsess
-	h.Save(res, req, ctx)
+	sessiondata := dt.(Data)
+	h.Data = sessiondata
+	h.Save(ctx, res, req)
 
 	return nil
 }
 
 // Save will keep the session handler state in the per-request context store.
-// It needs to be called to have changes to the way sessions are handled take effect.
-func (h *Handler) Save(res http.ResponseWriter, req *http.Request, ctx context.Object) {
-
-	if h.metadata.Updated() {
-		h.generate(res, req, ctx)
+// It needs to be called to apply changes due to a session reconfiguration.
+// Not safe for concurrent use by multiple goroutines.
+func (h *Handler) Save(ctx execution.Context, res http.ResponseWriter, req *http.Request) {
+	if h.Data.IsUpdated() {
+		h.generate(ctx, res, req)
 	}
-	ctx.Put(Key, h)
+	ctx.Put(h.Key(), h.SessionData())
 }
 
-// Renew will regenerate the session with a brand new session id. todo review: needs reload
-func (h *Handler) Renew(res http.ResponseWriter, req *http.Request, ctx context.Object) {
-	h.generate(res, req, ctx)
-	ctx.Put(Key, *h)
+// Renew will regenerate the session with a brand new session id.
+// This is the method to call when loading the session failed, for instance.
+func (h *Handler) Renew(ctx execution.Context, res http.ResponseWriter, req *http.Request) {
+	h.generate(ctx, res, req)
+	ctx.Put(h.Key(), h.SessionData())
 }
 
-// generate creates a new session (new session cookie with renewed session metadata)
-func (h *Handler) generate(res http.ResponseWriter, req *http.Request, ctx context.Object) {
+// generate rebuilds a completely new session
+// (clean-slate session cookie with clean-slate session data token)
+func (h *Handler) generate(ctx execution.Context, res http.ResponseWriter, req *http.Request) {
 
 	// 1. Create UUID
 	var uUID string
 	id := uuid.NewV4()
 	uUID = id.String()
 
-	// 2. Generate expiry date (in UTC) //TODO cookie.Expire for old browsers ?
+	// 2. Generate expiry date
 	var expdate time.Time
-	if h.Params.MaxAge > 0 {
-		expdate = time.Now().Add(time.Duration(h.Params.MaxAge) * time.Second).UTC()
+	expdate = h.Cookie.Expires.UTC()
+	if h.Cookie.MaxAge > 0 {
+		expdate = time.Now().Add(time.Duration(h.Cookie.MaxAge) * time.Second).UTC()
+		h.Cookie.Expires = expdate
 	}
 
-	// 3. Update internal metadata object
-	h.metadata.SetID(uUID)
-	h.metadata.Expire(expdate)
+	// 3. Update Data token
+	h.Data.SetID(uUID)
+	h.Data.SetExpiry(expdate)
 
 	// 4. Sets new cookie and save new session.
-	h.Params.Value = h.metadata.Encode(h.Secret)
-	http.SetCookie(res, &(h.Params))
-	h.metadata.Update(false)
-	ctx.Put(Key, h)
+	h.Cookie.Value = h.Data.Encode(h.Secret)
+	http.SetCookie(res, &(h.Cookie))
+	h.Data.Update(false)
+	ctx.Put(h.Key(), h)
 }
 
-// ServeHTTP effectively makes the session an http request handler middleware.
-func (h Handler) ServeHTTP(res http.ResponseWriter, req *http.Request, ctx context.Object) (http.ResponseWriter, bool) {
-	err := h.Load(res, req, ctx)
+// ServeHTTP effectively makes the session a xhttp request handler.
+func (h Handler) ServeHTTP(ctx execution.Context, res http.ResponseWriter, req *http.Request) {
+	err := h.Load(ctx, res, req)
 
 	if err != nil {
 		http.Error(res, "Failed to load session.", 500)
-		h.generate(res, req, ctx)
-		return res, true
+		h.generate(ctx, res, req)
 	}
 
-	return res, false
+	if h.next != nil {
+		h.next.ServeHTTP(ctx, res, req)
+	}
 }
 
 // computeHmac256 returns a base64 Encoded MAC.
@@ -382,4 +398,11 @@ func VerifySignature(messageb64, messageMAC, secret string) (bool, error) {
 	mac.Write(message)
 	expectedMAC := mac.Sum(nil)
 	return hmac.Equal([]byte(messageMAC), expectedMAC), nil
+}
+
+// DevStore returns a Key/Value datastructure implementing the Store
+// interface for convenience during development.
+// This is unsuitable for use in production.
+func DevStore() localmemstore.Store {
+	return localmemstore.New()
 }
