@@ -8,15 +8,15 @@ import (
 	"time"
 )
 
-// Data is a type for the information that will eventually be stored inside
+// data is a type for the information that will eventually be stored inside
 // a session cookie.
-type Data struct {
-	ID       string    // unique userID
-	ExpireOn time.Time // validity deadline
+type data struct {
+	ID       string
+	ExpireOn time.Time
 
-	// Value will be stored in the session cookie. Serialization and cryptographic
-	// encoding (strongly advised), is left at the behest of the client of
-	// this package.
+	// Value will be stored in the session cookie.
+	// Serialization and encryption is left at the
+	// behest of the client.
 	Value string
 
 	delimiter   string
@@ -24,8 +24,8 @@ type Data struct {
 	mu          *sync.Mutex
 }
 
-func newToken() Data {
-	return Data{
+func newToken() data {
+	return data{
 		// the delimiter should be sendable via cookie.
 		// It can't belong to the base64 list of accepted sigils.
 		delimiter:   ":",
@@ -35,7 +35,7 @@ func newToken() Data {
 }
 
 // Retrieve retrieves the session data.
-func (session *Data) Retrieve() Data {
+func (session *data) Retrieve() data {
 	session.mu.Lock()
 	d := *session
 	session.mu.Unlock()
@@ -43,7 +43,7 @@ func (session *Data) Retrieve() Data {
 }
 
 // GetID returns the session ID.
-func (session *Data) GetID() string {
+func (session *data) GetID() string {
 	session.mu.Lock()
 	i := session.ID
 	session.mu.Unlock()
@@ -51,7 +51,7 @@ func (session *Data) GetID() string {
 }
 
 // SetID changes the session ID.
-func (session *Data) SetID(s string) {
+func (session *data) SetID(s string) {
 	session.mu.Lock()
 	defer session.mu.Unlock()
 	session.ID = s
@@ -59,13 +59,13 @@ func (session *Data) SetID(s string) {
 }
 
 // GetExpiry returns the validity limit for a session.
-func (session *Data) GetExpiry() time.Time {
+func (session *data) GetExpiry() time.Time {
 	e := session.ExpireOn
 	return e
 }
 
 // SetExpiry changes the validity limit for a session.
-func (session *Data) SetExpiry(t time.Time) {
+func (session *data) SetExpiry(t time.Time) {
 	session.mu.Lock()
 	defer session.mu.Unlock()
 	session.ExpireOn = t
@@ -74,14 +74,14 @@ func (session *Data) SetExpiry(t time.Time) {
 
 // IsUpdated returns the status of a session. i.e. whether the client and the
 // server session information are synchronized.
-func (session *Data) IsUpdated() bool {
+func (session *data) IsUpdated() bool {
 	u := session.needsUpdate
 	return u
 }
 
 // Update notifies about the synchronization status between the client and the server
 // session.
-func (session *Data) Update(b bool) {
+func (session *data) Update(b bool) {
 	session.mu.Lock()
 	defer session.mu.Unlock()
 	session.needsUpdate = b
@@ -89,7 +89,7 @@ func (session *Data) Update(b bool) {
 
 // Encode is used to serialize the session data into a string format that can be stored
 // into a session cookie.
-func (session *Data) Encode(secret string) string {
+func (session *data) Encode(secret string) string {
 	j, err := json.Marshal(session)
 	if err != nil {
 		panic("JSON encoding internal failure. Exceptional behaviour while encoding session metadata.")
@@ -101,14 +101,14 @@ func (session *Data) Encode(secret string) string {
 // session data accessible.
 // If we detect that the client has tampered with the session cookie somehow,
 // an error is returned.
-func (session *Data) Decode(metadata string, secret string) error {
+func (session *data) Decode(metadata string, secret string) error {
 	// let's split the two components on the string-marshalled metadata (raw + Encoded)
 	s := strings.Split(secret, session.delimiter)
 	if len(s) <= 1 || len(s) > 4096 {
 		return ErrBadCookie
 	}
 
-	ok, err := VerifySignature(s[1], s[0], secret)
+	ok, err := verifySignature(s[1], s[0], secret)
 	if !ok {
 		return ErrBadSession
 	}
@@ -127,7 +127,7 @@ func (session *Data) Decode(metadata string, secret string) error {
 // at the behest of the client of this package.
 // Likewise, the max size for a cookie is 4Kb while a base64 string max size is
 // 48k. The client may want to do its own sanitizing checks.
-func (session *Data) AddValue(str string) {
+func (session *data) AddValue(str string) {
 	session.mu.Lock()
 	defer session.mu.Unlock()
 	session.Value = str

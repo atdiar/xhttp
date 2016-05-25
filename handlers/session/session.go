@@ -108,7 +108,7 @@ type Handler struct {
 
 	uuidgen func() string
 
-	Data Data
+	Data data
 	next xhttp.Handler
 }
 
@@ -169,8 +169,8 @@ func (h Handler) SetDuration(t time.Duration) Handler {
 	return h
 }
 
-// ChangeUUIDgen allows to change the unique session ID generator used.
-func (h Handler) ChangeUUIDgen(f func() string) Handler {
+// ChangeUUIDgenerator allows to change the unique session ID generator used.
+func (h Handler) ChangeUUIDgenerator(f func() string) Handler {
 	h.uuidgen = f
 	return h
 }
@@ -187,7 +187,6 @@ func (h Handler) Key() Key {
 
 // Get will retrieve the value corresponding to a given store key from
 // the session store.
-// Safe for concurrent use
 func (h Handler) Get(key string) ([]byte, error) {
 
 	if h.Cache == nil {
@@ -287,7 +286,7 @@ func (h Handler) SetExpiry(t time.Duration) (Handler, error) {
 }
 
 // SessionData returns the session data.
-func (h Handler) SessionData() Data {
+func (h Handler) SessionData() data {
 	return h.Data.Retrieve()
 }
 
@@ -315,7 +314,7 @@ func (h *Handler) Load(ctx execution.Context, res http.ResponseWriter, req *http
 		h.Save(ctx, res, req)
 		return nil
 	}
-	sessiondata := dt.(Data)
+	sessiondata := dt.(data)
 	h.Data = sessiondata
 	h.Save(ctx, res, req)
 
@@ -388,8 +387,8 @@ func computeHmac256(message, secret []byte) string {
 	return base64.StdEncoding.EncodeToString(h.Sum(nil))
 }
 
-// VerifySignature checks the integrity of the metadata whose MAC was computed.
-func VerifySignature(messageb64, messageMAC, secret string) (bool, error) {
+// verifySignature checks the integrity of the metadata whose MAC was computed.
+func verifySignature(messageb64, messageMAC, secret string) (bool, error) {
 	message, err := base64.StdEncoding.DecodeString(messageb64)
 	if err != nil {
 		return false, err
