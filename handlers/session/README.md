@@ -81,7 +81,7 @@ A session store shall implement the Store interface:
 // Store defines the interface that a session store should implement.
 // It should be made safe for concurrent use by multiple goroutines.
 //
-// NOTE: Expire sets a timeout for the validity of a session.
+// NOTE: SetExpiry sets a timeout for the validity of a session.
 // if t = 0, the session should expire immediately.
 // if t < 0, the session does not expire.
 type Store interface {
