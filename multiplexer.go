@@ -14,9 +14,9 @@ import (
 // It wraps around a net/http multiplexer.
 // It facilitates the registration of request handlers.
 type ServeMux struct {
-	catchAll HandlerLinker
-	handlers map[string]verbsHandler
-	timeout  time.Duration
+	catchAll        HandlerLinker
+	routeHandlerMap map[string]verbsHandlerList
+	timeout         time.Duration
 	*http.ServeMux
 	pool *sync.Pool
 }
@@ -46,7 +46,7 @@ func SetTimeout(t time.Duration) func(*ServeMux) {
 func NewServeMux(options ...option) ServeMux {
 	sm := ServeMux{}
 	sm.ServeMux = http.DefaultServeMux
-	sm.handlers = make(map[string]verbsHandler)
+	sm.routeHandlerMap = make(map[string]verbsHandlerList)
 	sm.pool = sac.Pool()
 
 	// The below applies the options if any were passed.
@@ -62,7 +62,7 @@ func (sm ServeMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	_, pattern := sm.ServeMux.Handler(req)
 
 	// Let's check whether a handler has been registered for this pattern.
-	if vh, ok := sm.handlers[pattern]; ok {
+	if vh, ok := sm.routeHandlerMap[pattern]; ok {
 
 		// Let's extract the http Method and apply the handler if it exists.
 		method := strings.ToUpper(req.Method)
@@ -212,21 +212,21 @@ func (sm ServeMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
-// verbsHandler defines the request handling that is attached to each http
+// verbsHandlerList is a structure that lists the request handlers for each http
 // verb.
-type verbsHandler struct {
-	get     transformationHandler
-	post    transformationHandler
-	put     transformationHandler
-	patch   transformationHandler
-	delete  transformationHandler
-	head    transformationHandler
-	options transformationHandler
-	connect transformationHandler
-	trace   transformationHandler
+type verbsHandlerList struct {
+	get     transformableHandler
+	post    transformableHandler
+	put     transformableHandler
+	patch   transformableHandler
+	delete  transformableHandler
+	head    transformableHandler
+	options transformableHandler
+	connect transformableHandler
+	trace   transformableHandler
 }
 
-func (vh *verbsHandler) prepend(h HandlerLinker) {
+func (vh *verbsHandlerList) prepend(h HandlerLinker) {
 	vh.get.prepend(h)
 	vh.post.prepend(h)
 	vh.put.prepend(h)
@@ -238,21 +238,21 @@ func (vh *verbsHandler) prepend(h HandlerLinker) {
 	vh.trace.prepend(h)
 }
 
-// transformationHandler is defined per pattern and per verb.
+// transformableHandler is defined per pattern and per verb.
 // This format allows for the modification of a handler. For instance, it is
 // used to prepend catchall request handlers more easily.
 // It implements the Handler interface.
-type transformationHandler struct {
+type transformableHandler struct {
 	input   Handler
 	Handler // output
 }
 
-func (t *transformationHandler) register(h Handler) {
+func (t *transformableHandler) register(h Handler) {
 	t.input = h
 	t.Handler = h
 }
 
-func (t *transformationHandler) prepend(h HandlerLinker) {
+func (t *transformableHandler) prepend(h HandlerLinker) {
 	if h != nil {
 		t.Handler = h.Link(t.input)
 	}
@@ -267,15 +267,13 @@ func (sm *ServeMux) GET(pattern string, h Handler) {
 		panic("ERROR: Handler should not be nil.")
 	}
 
-	routehandler, ok := sm.handlers[pattern]
+	routehandler, ok := sm.routeHandlerMap[pattern]
 	if !ok {
 		sm.ServeMux.Handle(pattern, sm)
 	}
-
 	routehandler.get.register(h)
 	routehandler.get.prepend(sm.catchAll)
-	sm.handlers[pattern] = routehandler
-
+	sm.routeHandlerMap[pattern] = routehandler
 }
 
 // POST registers the request Handler for the servicing of http POST requests.
@@ -285,14 +283,14 @@ func (sm *ServeMux) POST(pattern string, h Handler) {
 		panic("ERROR: Handler should not be nil.")
 	}
 
-	routehandler, ok := sm.handlers[pattern]
+	routehandler, ok := sm.routeHandlerMap[pattern]
 	if !ok {
 		sm.ServeMux.Handle(pattern, sm)
 	}
 
 	routehandler.post.register(h)
 	routehandler.post.prepend(sm.catchAll)
-	sm.handlers[pattern] = routehandler
+	sm.routeHandlerMap[pattern] = routehandler
 
 }
 
@@ -303,14 +301,14 @@ func (sm *ServeMux) PUT(pattern string, h Handler) {
 		panic("ERROR: Handler should not be nil.")
 	}
 
-	routehandler, ok := sm.handlers[pattern]
+	routehandler, ok := sm.routeHandlerMap[pattern]
 	if !ok {
 		sm.ServeMux.Handle(pattern, *sm)
 	}
 
 	routehandler.put.register(h)
 	routehandler.put.prepend(sm.catchAll)
-	sm.handlers[pattern] = routehandler
+	sm.routeHandlerMap[pattern] = routehandler
 
 }
 
@@ -321,14 +319,14 @@ func (sm *ServeMux) PATCH(pattern string, h Handler) {
 		panic("ERROR: Handler should not be nil.")
 	}
 
-	routehandler, ok := sm.handlers[pattern]
+	routehandler, ok := sm.routeHandlerMap[pattern]
 	if !ok {
 		sm.ServeMux.Handle(pattern, *sm)
 	}
 
 	routehandler.patch.register(h)
 	routehandler.patch.prepend(sm.catchAll)
-	sm.handlers[pattern] = routehandler
+	sm.routeHandlerMap[pattern] = routehandler
 
 }
 
@@ -339,14 +337,14 @@ func (sm *ServeMux) DELETE(pattern string, h Handler) {
 		panic("ERROR: Handler should not be nil.")
 	}
 
-	routehandler, ok := sm.handlers[pattern]
+	routehandler, ok := sm.routeHandlerMap[pattern]
 	if !ok {
 		sm.ServeMux.Handle(pattern, *sm)
 	}
 
 	routehandler.delete.register(h)
 	routehandler.delete.prepend(sm.catchAll)
-	sm.handlers[pattern] = routehandler
+	sm.routeHandlerMap[pattern] = routehandler
 
 }
 
@@ -357,14 +355,14 @@ func (sm *ServeMux) HEAD(pattern string, h Handler) {
 		panic("ERROR: Handler should not be nil.")
 	}
 
-	routehandler, ok := sm.handlers[pattern]
+	routehandler, ok := sm.routeHandlerMap[pattern]
 	if !ok {
 		sm.ServeMux.Handle(pattern, *sm)
 	}
 
 	routehandler.head.register(h)
 	routehandler.head.prepend(sm.catchAll)
-	sm.handlers[pattern] = routehandler
+	sm.routeHandlerMap[pattern] = routehandler
 
 }
 
@@ -375,14 +373,14 @@ func (sm *ServeMux) OPTIONS(pattern string, h Handler) {
 		panic("ERROR: Handler should not be nil.")
 	}
 
-	routehandler, ok := sm.handlers[pattern]
+	routehandler, ok := sm.routeHandlerMap[pattern]
 	if !ok {
 		sm.ServeMux.Handle(pattern, *sm)
 	}
 
 	routehandler.options.register(h)
 	routehandler.options.prepend(sm.catchAll)
-	sm.handlers[pattern] = routehandler
+	sm.routeHandlerMap[pattern] = routehandler
 
 }
 
@@ -393,14 +391,14 @@ func (sm *ServeMux) CONNECT(pattern string, h Handler) {
 		panic("ERROR: Handler should not be nil.")
 	}
 
-	routehandler, ok := sm.handlers[pattern]
+	routehandler, ok := sm.routeHandlerMap[pattern]
 	if !ok {
 		sm.ServeMux.Handle(pattern, *sm)
 	}
 
 	routehandler.connect.register(h)
 	routehandler.connect.prepend(sm.catchAll)
-	sm.handlers[pattern] = routehandler
+	sm.routeHandlerMap[pattern] = routehandler
 
 }
 
@@ -411,29 +409,30 @@ func (sm *ServeMux) TRACE(pattern string, h Handler) {
 		panic("ERROR: Handler should not be nil.")
 	}
 
-	routehandler, ok := sm.handlers[pattern]
+	routehandler, ok := sm.routeHandlerMap[pattern]
 	if !ok {
 		sm.ServeMux.Handle(pattern, *sm)
 	}
 
 	routehandler.trace.register(h)
 	routehandler.trace.prepend(sm.catchAll)
-	sm.handlers[pattern] = routehandler
+	sm.routeHandlerMap[pattern] = routehandler
 
 }
 
 // USE registers linkable request Handlers (i.e. implementing HandlerLinker)
 // which shall be servicing any path, regardless of the request method.
 func (sm *ServeMux) USE(handlers ...HandlerLinker) {
-	link := Chain(handlers...)
+	linkable := Chain(handlers...)
 	if sm.catchAll != nil {
-		sm.catchAll.Link(link)
+		ca := sm.catchAll.Link(linkable)
+		sm.catchAll = ca
 	} else {
-		sm.catchAll = link
+		sm.catchAll = linkable
 	}
-	for method, vh := range sm.handlers {
+	for method, vh := range sm.routeHandlerMap {
 		vh.prepend(sm.catchAll)
-		sm.handlers[method] = vh
+		sm.routeHandlerMap[method] = vh
 	}
 }
 
@@ -450,10 +449,35 @@ func Chain(handlers ...HandlerLinker) HandlerLinker {
 	if l > 1 {
 		// Starting from the penultimate element, we link the handlers using the
 		// Link registration method.
-		for i := range handlers[:l-2] {
+		for i := range handlers[:l-1] {
 			h := handlers[l-2-i].Link(handlers[l-1-i])
 			handlers[l-2-i] = h
 		}
 	}
-	return handlers[0]
+	return handlerchain(handlers)
+}
+
+type handlerchain []HandlerLinker
+
+func (h handlerchain) ServeHTTP(ctx execution.Context, res http.ResponseWriter, req *http.Request) {
+	h[0].ServeHTTP(ctx, res, req)
+}
+
+func (h handlerchain) Link(l Handler) HandlerLinker {
+	length := len(h)
+	if length == 0 {
+		panic("Linking to nothing is impossible.")
+	}
+	nh := h[length-1].Link(l)
+	h[length-1] = nh
+
+	if length > 1 {
+		// Starting from the penultimate element, we link the handlers using the
+		// Link registration method.
+		for i := range h[:length-1] {
+			nh := h[length-2-i].Link(h[length-1-i])
+			h[length-2-i] = nh
+		}
+	}
+	return h
 }
