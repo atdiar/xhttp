@@ -6,11 +6,10 @@ package session
 Package description
 ===================
 
-The session package contains three files:
+The session package contains two files:
 
 * session.go
 * metadata.go
-* localmemstore.go
 
 session.go defines a xhttp.Handler type which creates a session per
 request.
@@ -18,8 +17,6 @@ request.
 metadata.go defines the format of session data that is marshalled/unmarshalled
 to/from the session cookie.
 
-localstorage.go defines a simple implementation of a session store for
-development purpose. It should not be used in production.
 */
 
 import (
@@ -37,10 +34,6 @@ import (
 	"github.com/satori/go.uuid"
 )
 
-// TODO :
-// - logging
-// - Tests
-// build tag for localmemstore
 const (
 	maxInt32 = 1<<31 - 1
 	maxInt64 = 1<<63 - 1
@@ -80,10 +73,6 @@ type Store interface {
 	Delete(id, hkey string) error
 	SetExpiry(id string, t time.Duration) error
 }
-
-// Key is a type that allows to define a specific Key to be used in Key/Value
-// stores to save/retrieve a session.
-type Key struct{}
 
 // Handler defines a type for request handling objects in charge of
 // session instantiation and validation.
@@ -175,12 +164,6 @@ func (h Handler) ChangeUUIDgenerator(f func() string) Handler {
 	return h
 }
 
-// Key returns a value that is used to retrieve a saved session handler from
-// the per-request context datastore.
-func (h Handler) Key() Key {
-	return Key{}
-}
-
 // *****************************************************************************
 // Session handler UI
 // *****************************************************************************
@@ -264,11 +247,12 @@ func (h Handler) Delete(key string) error {
 // * if t <0, the session expires immediately.
 // * if t = 0, the session expires when the browser is closed. (browser session)
 // * if t > 0, the session expires after t seconds.
-func (h Handler) SetExpiry(t time.Duration) (Handler, error) {
+// Not safe for concurrent use by multiple goroutines.
+func (h *Handler) SetExpiry(t time.Duration) error {
 	// server-side
 	err := h.Store.SetExpiry(h.Data.GetID(), t)
 	if err != nil {
-		return h, err
+		return err
 	}
 	// since cookie.MaxAge is an int type, we need to do a little gymnastic here
 	// to avoid overflow.
@@ -280,14 +264,26 @@ func (h Handler) SetExpiry(t time.Duration) (Handler, error) {
 	h.Cookie.MaxAge = int(t)
 	d := time.Now().UTC().Add(t)
 	h.Cookie.Expires = d
-	h.Data.SetExpiry(d)
+	if t == 0 {
+		h.Cookie.Expires = time.Time{}
+	}
+	h.Data.setExpiry(d)
 
-	return h, nil
+	return nil
 }
 
-// SessionData returns the session data.
-func (h Handler) SessionData() data {
-	return h.Data.Retrieve()
+// DataFromCtx tries to recover the session data that would have been
+// saved within an execution.Context datastore, as is usually the case.
+func (h Handler) DataFromCtx(ctx execution.Context) (d data, err error) {
+	v, err := ctx.Get(h.Cookie.Name)
+	if err != nil {
+		return d, err
+	}
+	res, ok := v.(data)
+	if !ok {
+		return d, errors.New("Invalid session data format.")
+	}
+	return res, nil
 }
 
 // Load will try to recover the session handler state if it was previously
@@ -295,7 +291,7 @@ func (h Handler) SessionData() data {
 // object if it exists. If none works, an error is returned.
 // Not safe for concurrent use by multiple goroutines. (Would not make sense)
 func (h *Handler) Load(ctx execution.Context, res http.ResponseWriter, req *http.Request) error {
-	dt, err := ctx.Get(h.Key())
+	dt, err := ctx.Get(h.Cookie.Name)
 
 	if err != nil {
 		// in this case, there is no session already laoded and saved.
@@ -321,31 +317,22 @@ func (h *Handler) Load(ctx execution.Context, res http.ResponseWriter, req *http
 	return nil
 }
 
-// Save will keep the session handler state in the per-request context store.
-// It needs to be called to apply changes due to a session reconfiguration.
+// Save will update and keep the session data in the per-request context store.
+// It needs to be called to apply session data changes.
+// These changes entail a modification in the value of the session cookie.
 // Not safe for concurrent use by multiple goroutines.
 func (h *Handler) Save(ctx execution.Context, res http.ResponseWriter, req *http.Request) {
-	if h.Data.IsUpdated() {
-		h.generate(ctx, res, req)
-	}
-	ctx.Put(h.Key(), h.SessionData())
+	h.Cookie.Value = h.Data.Encode(h.Secret)
+	http.SetCookie(res, &(h.Cookie))
+	h.Data.SetIsUpdated(false)
+	ctx.Put(h.Cookie.Name, h.Data)
 }
 
-// Renew will regenerate the session with a brand new session id.
-// This is the method to call when loading the session failed, for instance.
-func (h *Handler) Renew(ctx execution.Context, res http.ResponseWriter, req *http.Request) {
-	h.generate(ctx, res, req)
-	ctx.Put(h.Key(), h.SessionData())
-}
-
-// generate rebuilds a completely new session
-// (clean-slate session cookie with clean-slate session data token)
-func (h *Handler) generate(ctx execution.Context, res http.ResponseWriter, req *http.Request) {
+// Generate creates a completely new session.
+func (h *Handler) Generate(ctx execution.Context, res http.ResponseWriter, req *http.Request) {
 
 	// 1. Create UUID
-	var uUID string
-	id := uuid.NewV4()
-	uUID = id.String()
+	uUID := h.uuidgen()
 
 	// 2. Generate expiry date
 	var expdate time.Time
@@ -357,13 +344,9 @@ func (h *Handler) generate(ctx execution.Context, res http.ResponseWriter, req *
 
 	// 3. Update Data token
 	h.Data.SetID(uUID)
-	h.Data.SetExpiry(expdate)
+	h.Data.setExpiry(expdate)
 
-	// 4. Sets new cookie and save new session.
-	h.Cookie.Value = h.Data.Encode(h.Secret)
-	http.SetCookie(res, &(h.Cookie))
-	h.Data.Update(false)
-	ctx.Put(h.Key(), h)
+	h.Save(ctx, res, req)
 }
 
 // ServeHTTP effectively makes the session a xhttp request handler.
@@ -371,8 +354,7 @@ func (h Handler) ServeHTTP(ctx execution.Context, res http.ResponseWriter, req *
 	err := h.Load(ctx, res, req)
 
 	if err != nil {
-		http.Error(res, "Failed to load session.", 500)
-		h.generate(ctx, res, req)
+		h.Generate(ctx, res, req)
 	}
 
 	if h.next != nil {
@@ -380,15 +362,15 @@ func (h Handler) ServeHTTP(ctx execution.Context, res http.ResponseWriter, req *
 	}
 }
 
-// computeHmac256 returns a base64 Encoded MAC.
-func computeHmac256(message, secret []byte) string {
+// ComputeHmac256 returns a base64 Encoded MAC.
+func ComputeHmac256(message, secret []byte) string {
 	h := hmac.New(sha256.New, secret)
 	h.Write(message)
 	return base64.StdEncoding.EncodeToString(h.Sum(nil))
 }
 
-// verifySignature checks the integrity of the metadata whose MAC was computed.
-func verifySignature(messageb64, messageMAC, secret string) (bool, error) {
+// VerifySignature checks the integrity of the metadata whose MAC was computed.
+func VerifySignature(messageb64, messageMAC, secret string) (bool, error) {
 	message, err := base64.StdEncoding.DecodeString(messageb64)
 	if err != nil {
 		return false, err

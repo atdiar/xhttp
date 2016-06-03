@@ -34,8 +34,8 @@ func newToken() data {
 	}
 }
 
-// Retrieve retrieves the session data.
-func (session *data) Retrieve() data {
+// RetrieveData retrieves the session data.
+func (session *data) RetrieveData() data {
 	session.mu.Lock()
 	d := *session
 	session.mu.Unlock()
@@ -64,12 +64,33 @@ func (session *data) GetExpiry() time.Time {
 	return e
 }
 
-// SetExpiry changes the validity limit for a session.
-func (session *data) SetExpiry(t time.Time) {
+// setExpiry changes the validity limit for a session.
+func (session *data) setExpiry(t time.Time) {
 	session.mu.Lock()
 	defer session.mu.Unlock()
 	session.ExpireOn = t
 	session.needsUpdate = true
+}
+
+// StoreValue allows the storage of session data onto the client.
+// To be used with care.
+// The responsibility of making sure the data is cryptographically secure is
+// at the behest of the client of this package.
+// Likewise, the max size for a cookie is 4Kb while a base64 string max size is
+// 48k. The client may want to do its own sanitizing checks.
+func (session *data) StoreValue(str string) {
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	session.Value = str
+	session.needsUpdate = true
+}
+
+// RetrieveValue returns the content stored in a session data token.
+func (session *data) RetrieveValue() string {
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	v := session.Value
+	return v
 }
 
 // IsUpdated returns the status of a session. i.e. whether the client and the
@@ -79,9 +100,9 @@ func (session *data) IsUpdated() bool {
 	return u
 }
 
-// Update notifies about the synchronization status between the client and the server
+// SetIsUpdated notifies about the synchronization status between the client and the server
 // session.
-func (session *data) Update(b bool) {
+func (session *data) SetIsUpdated(b bool) {
 	session.mu.Lock()
 	defer session.mu.Unlock()
 	session.needsUpdate = b
@@ -94,7 +115,7 @@ func (session *data) Encode(secret string) string {
 	if err != nil {
 		panic("JSON encoding internal failure. Exceptional behaviour while encoding session metadata.")
 	}
-	return computeHmac256(j, []byte(secret)) + session.delimiter + base64.StdEncoding.EncodeToString(j)
+	return ComputeHmac256(j, []byte(secret)) + session.delimiter + base64.StdEncoding.EncodeToString(j)
 }
 
 // Decode is used to deserialize the session cookie in order to make the stored
@@ -108,7 +129,7 @@ func (session *data) Decode(metadata string, secret string) error {
 		return ErrBadCookie
 	}
 
-	ok, err := verifySignature(s[1], s[0], secret)
+	ok, err := VerifySignature(s[1], s[0], secret)
 	if !ok {
 		return ErrBadSession
 	}
@@ -119,17 +140,4 @@ func (session *data) Decode(metadata string, secret string) error {
 
 	err = json.Unmarshal(str, session)
 	return err
-}
-
-// AddValue allows the storage of session data onto the client.
-// To be used with care.
-// The responsibility of making sure the data is cryptographically secure is
-// at the behest of the client of this package.
-// Likewise, the max size for a cookie is 4Kb while a base64 string max size is
-// 48k. The client may want to do its own sanitizing checks.
-func (session *data) AddValue(str string) {
-	session.mu.Lock()
-	defer session.mu.Unlock()
-	session.Value = str
-	session.needsUpdate = true
 }
