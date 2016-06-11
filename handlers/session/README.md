@@ -55,7 +55,8 @@ func (h Handler) Delete(key string) error
 // * if t <0, the session expires immediately.
 // * if t = 0, the session expires when the browser is closed. (browser session)
 // * if t > 0, the session expires after t seconds.
-func (h Handler) SetExpiry(t time.Duration) (Handler, error)  
+// Not safe for concurrent use by multiple goroutines.
+func (h *Handler) SetExpiry(t time.Duration) error   
 
 // Load will try to recover the session handler state if it was previously
 // handled. Otherwise, it will try loading the metadata directly from the request
