@@ -38,7 +38,7 @@ type Handler struct {
 // order to  check the validity of a request, a fully parameterized session
 // Handler object should be passed as argument.
 // By default, the session cookie, holding the anti-CSRF value, is named
-// "XSRF-TOKEN"
+// "ANTICSRF"
 func New(s session.Handler) Handler {
 	h := Handler{}
 	s = s.DisableCaching()
