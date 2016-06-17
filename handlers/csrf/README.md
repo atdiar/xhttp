@@ -1,4 +1,5 @@
 # csrf
+[![GoDoc](https://godoc.org/github.com/atdiar/xhttp/handlers/csrf?status.svg)](https://godoc.org/github.com/atdiar/xhttp/handlers/csrf)
 
 This package implements a request handler for incoming http requests.
 It creates a browser session on the client side which provides a token that should
