@@ -25,15 +25,12 @@ Indeed the session is simply used for its server-side session data storage.
 
 ## User-Interface
 
-### Lax Mode
-`LaxMode()` is a method that disable the requirements to set an anti-CSRF header. This is less secure as the protection now relies entirely on double-checking the anti-CSRF cookie value.
+### LaxMode
+`LaxMode()` is a method that disables the requirements to set an anti-CSRF header. This is less secure as the protection now relies entirely on double-checking the anti-CSRF cookie value.
 
-### anti-CSRF value retrieval
+### Anti-CSRF value retrieval
 The anti-CSRF value is stored in the context datastore during inflight request handling.
 It can be retrieved via the `TokenFromCtx()` method.
-
-### HandlerLinker
-This request handler implements the HandlerLinker interface as defined in the xhttp package.
 
 ## Dependencies
 This package depends on:
