@@ -385,7 +385,8 @@ func (sm *ServeMux) OPTIONS(pattern string, h Handler) {
 }
 
 // CONNECT registers the request Handler for the servicing of http CONNECT requests.
-func (sm *ServeMux) CONNECT(pattern string, h Handler) {
+func (sm *ServeMux) CONNECT(h Handler) {
+	pattern := "/"
 
 	if h == nil {
 		panic("ERROR: Handler should not be nil.")
