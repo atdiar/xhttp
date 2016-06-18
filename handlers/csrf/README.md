@@ -31,6 +31,7 @@ Indeed the session is simply used for its server-side session data storage.
 ### Anti-CSRF value retrieval
 The anti-CSRF value is stored in the context datastore during inflight request handling.
 It can be retrieved via the `TokenFromCtx()` method.
+This is useful for server-side rendering of html templates.
 
 ## Dependencies
 This package depends on:
