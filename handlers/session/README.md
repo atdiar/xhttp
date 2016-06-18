@@ -94,7 +94,7 @@ type Store interface {
 
 ```
 
-An example of session store is the one provided by the function ` TestStore()`
+An example of session store is the one provided by the function ` DevStore()`
 This is a basic in-memory, non-distributed key/value store that runs within the same app instance and is useful for
 development purposes only.
 
