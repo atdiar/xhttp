@@ -65,7 +65,7 @@ func TestAntiCSRF(t *testing.T) {
 	}
 	body := strings.TrimSpace(string(raw))
 
-	s := RetrieveCookie(res.Header, "XSRF-TOKEN")
+	s := RetrieveCookie(res.Header, "ANTICSRF")
 	if s == nil {
 		t.Fatal("The anti-CSRF cookie does not exist. Weird!")
 	}
@@ -91,7 +91,7 @@ func TestAntiCSRF(t *testing.T) {
 	}
 	body = strings.TrimSpace(string(raw))
 
-	s = RetrieveCookie(res.Header, "XSRF-TOKEN")
+	s = RetrieveCookie(res.Header, "ANTICSRF")
 	if s == nil {
 		t.Fatal("The anti-CSRF cookie does not exist. Weird!")
 	}
@@ -107,7 +107,7 @@ func TestAntiCSRF(t *testing.T) {
 		t.Fatal(err)
 	}
 	req.AddCookie(s)
-	req.Header.Add(s.Name, s.Value)
+	req.Header.Add(anticsrf.Header, s.Value)
 
 	res, err = http.DefaultClient.Do(req)
 	if err != nil {
@@ -120,7 +120,7 @@ func TestAntiCSRF(t *testing.T) {
 	}
 	body = strings.TrimSpace(string(raw))
 
-	s = RetrieveCookie(res.Header, "XSRF-TOKEN")
+	s = RetrieveCookie(res.Header, "ANTICSRF")
 	if s == nil {
 		t.Fatal("The anti-CSRF cookie does not exist. Weird!")
 	}
@@ -140,7 +140,7 @@ func TestAntiCSRF(t *testing.T) {
 		t.Fatal(err)
 	}
 	req.AddCookie(s)
-	req.Header.Add(s.Name, "new value")
+	req.Header.Add(anticsrf.Header, "new value")
 
 	res, err = http.DefaultClient.Do(req)
 	if err != nil {
@@ -154,7 +154,7 @@ func TestAntiCSRF(t *testing.T) {
 	}
 	body = strings.TrimSpace(string(raw))
 
-	s = RetrieveCookie(res.Header, "XSRF-TOKEN")
+	s = RetrieveCookie(res.Header, "ANTICSRF")
 	if s == nil {
 		t.Fatal("The anti-CSRF cookie does not exist. Weird!")
 	}
@@ -172,7 +172,7 @@ func TestAntiCSRF(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req.Header.Add(s.Name, s.Value)
+	req.Header.Add(anticsrf.Header, s.Value)
 
 	res, err = http.DefaultClient.Do(req)
 	if err != nil {
@@ -186,7 +186,7 @@ func TestAntiCSRF(t *testing.T) {
 	}
 	body = strings.TrimSpace(string(raw))
 
-	s = RetrieveCookie(res.Header, "XSRF-TOKEN")
+	s = RetrieveCookie(res.Header, "ANTICSRF")
 	if s == nil {
 		t.Fatal("The anti-CSRF cookie does not exist. Weird!")
 	}

@@ -28,6 +28,7 @@ var (
 // to protect against Cross-Site Request Forgery vulnerabilities.
 type Handler struct {
 	Cookie  http.Cookie // anti-csrf cookie sent to client.
+	Header  string      // Name of the anti-csrf request header to check
 	Session session.Handler
 	strict  bool // if true, a request is only valid if the xsrf Header is present.
 	next    xhttp.Handler
@@ -46,6 +47,7 @@ func New(s session.Handler) Handler {
 	h.Cookie = h.Session.Cookie
 	h.strict = true
 
+	h.Header = "X-CSRF-TOKEN"
 	h.Cookie.Name = "ANTICSRF"
 	h.Cookie.HttpOnly = false
 	h.Cookie.MaxAge = 0
@@ -80,7 +82,7 @@ func (h Handler) generateToken(ctx execution.Context, res http.ResponseWriter, r
 	h.Session.Cookie = h.Cookie
 	h.Session.Data.StoreValue(tok)
 
-	if err = h.Session.Put(h.Cookie.Name, ([]byte)(tok)); err != nil {
+	if err = h.Session.Put(tok, ([]byte)(tok)); err != nil {
 		http.Error(res, "Storing new CSRF Token in session failed", 503)
 		return err
 	}
@@ -134,7 +136,7 @@ func (h Handler) ServeHTTP(ctx execution.Context, res http.ResponseWriter, req *
 		return
 
 	default:
-		Header, ok := req.Header[h.Cookie.Name]
+		Header, ok := req.Header[h.Header]
 		if !ok {
 			if h.strict {
 				err = h.generateToken(ctx, res, req)
@@ -157,7 +159,7 @@ func (h Handler) ServeHTTP(ctx execution.Context, res http.ResponseWriter, req *
 			}
 			// Validation
 			tokenReceived := h.Session.Data.RetrieveValue()
-			rawTokenInSession, err := h.Session.Get(h.Session.Cookie.Name)
+			rawTokenInSession, err := h.Session.Get(tokenReceived)
 			if err != nil {
 				err = h.generateToken(ctx, res, req)
 				if err != nil {
@@ -195,7 +197,7 @@ func (h Handler) ServeHTTP(ctx execution.Context, res http.ResponseWriter, req *
 
 		tokenReceived := Header[0]
 		tokenFromCookie := h.Session.Data.RetrieveValue()
-		rawTokenInSession, err := h.Session.Get(h.Session.Cookie.Name)
+		rawTokenInSession, err := h.Session.Get(tokenReceived)
 		if err != nil {
 			err = h.generateToken(ctx, res, req)
 			if err != nil {
