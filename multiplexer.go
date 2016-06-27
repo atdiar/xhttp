@@ -71,7 +71,8 @@ func (sm ServeMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			// Let's create the datastore and then the execution context
 			rawS := sm.pool.Get()
 			S := rawS.(*sac.Instance)
-			ctx := execution.NewContext(S)
+			aS := sacAdapter{S}
+			ctx := execution.NewContext(aS)
 			if sm.timeout != 0 {
 				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
 			}
@@ -86,7 +87,8 @@ func (sm ServeMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			// Let's create the datastore and then the execution context
 			rawS := sm.pool.Get()
 			S := rawS.(*sac.Instance)
-			ctx := execution.NewContext(S)
+			aS := sacAdapter{S}
+			ctx := execution.NewContext(aS)
 			if sm.timeout != 0 {
 				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
 			}
@@ -101,7 +103,8 @@ func (sm ServeMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			// Let's create the datastore and then the execution context
 			rawS := sm.pool.Get()
 			S := rawS.(*sac.Instance)
-			ctx := execution.NewContext(S)
+			aS := sacAdapter{S}
+			ctx := execution.NewContext(aS)
 			if sm.timeout != 0 {
 				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
 			}
@@ -116,7 +119,8 @@ func (sm ServeMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			// Let's create the datastore and then the execution context
 			rawS := sm.pool.Get()
 			S := rawS.(*sac.Instance)
-			ctx := execution.NewContext(S)
+			aS := sacAdapter{S}
+			ctx := execution.NewContext(aS)
 			if sm.timeout != 0 {
 				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
 			}
@@ -131,7 +135,8 @@ func (sm ServeMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			// Let's create the datastore and then the execution context
 			rawS := sm.pool.Get()
 			S := rawS.(*sac.Instance)
-			ctx := execution.NewContext(S)
+			aS := sacAdapter{S}
+			ctx := execution.NewContext(aS)
 			if sm.timeout != 0 {
 				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
 			}
@@ -146,7 +151,8 @@ func (sm ServeMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			// Let's create the datastore and then the execution context
 			rawS := sm.pool.Get()
 			S := rawS.(*sac.Instance)
-			ctx := execution.NewContext(S)
+			aS := sacAdapter{S}
+			ctx := execution.NewContext(aS)
 			if sm.timeout != 0 {
 				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
 			}
@@ -161,7 +167,8 @@ func (sm ServeMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			// Let's create the datastore and then the execution context
 			rawS := sm.pool.Get()
 			S := rawS.(*sac.Instance)
-			ctx := execution.NewContext(S)
+			aS := sacAdapter{S}
+			ctx := execution.NewContext(aS)
 			if sm.timeout != 0 {
 				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
 			}
@@ -176,7 +183,8 @@ func (sm ServeMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			// Let's create the datastore and then the execution context
 			rawS := sm.pool.Get()
 			S := rawS.(*sac.Instance)
-			ctx := execution.NewContext(S)
+			aS := sacAdapter{S}
+			ctx := execution.NewContext(aS)
 			if sm.timeout != 0 {
 				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
 			}
@@ -191,7 +199,8 @@ func (sm ServeMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			// Let's create the datastore and then the execution context
 			rawS := sm.pool.Get()
 			S := rawS.(*sac.Instance)
-			ctx := execution.NewContext(S)
+			aS := sacAdapter{S}
+			ctx := execution.NewContext(aS)
 			if sm.timeout != 0 {
 				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
 			}
@@ -481,4 +490,16 @@ func (h handlerchain) Link(l Handler) HandlerLinker {
 		}
 	}
 	return h
+}
+
+// sacAdapter is nothing but a wrapper around a sac Instance so that
+// we can implement the execution.Storer interface fully (i.e. add a clone
+// method).
+type sacAdapter struct {
+	*sac.Instance
+}
+
+func (s sacAdapter) Clone() execution.Storer {
+	s.Instance = s.Instance.Clone()
+	return execution.Storer(s)
 }
