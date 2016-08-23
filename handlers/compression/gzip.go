@@ -20,13 +20,6 @@ type Gzipper struct {
 	next xhttp.Handler
 }
 
-// Link registers a next request Handler to be called by ServeHTTP method.
-// It returns the linked reqest Handlers.
-func (g Gzipper) Link(h xhttp.Handler) xhttp.HandlerLinker {
-	g.next = h
-	return g
-}
-
 // NewHandler returns a response compressing Handler.
 func NewHandler() Gzipper {
 	g := Gzipper{}
@@ -115,4 +108,11 @@ func (g Gzipper) ServeHTTP(ctx execution.Context, w http.ResponseWriter, req *ht
 	if err != nil {
 		ctx.Panic(err)
 	}
+}
+
+// Link registers a next request Handler to be called by ServeHTTP method.
+// It returns the result of the linking.
+func (g Gzipper) Link(h xhttp.Handler) xhttp.HandlerLinker {
+	g.next = h
+	return g
 }
