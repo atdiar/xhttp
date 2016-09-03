@@ -1,13 +1,14 @@
+// Package xhttp provides a convenience wrapper around a net/http multiplexer.
+// Its main goal is to provide an easier configuration of the multiplexer.
 package xhttp
 
 import (
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/atdiar/goroutine/execution"
-	"github.com/atdiar/sac"
+	"github.com/atdiar/hmap"
 )
 
 // ServeMux holds the multiplexing logic of incoming http requests.
@@ -18,7 +19,6 @@ type ServeMux struct {
 	routeHandlerMap map[string]verbsHandlerList
 	timeout         time.Duration
 	*http.ServeMux
-	pool *sync.Pool
 }
 
 type option func(*ServeMux)
@@ -47,7 +47,6 @@ func NewServeMux(options ...option) ServeMux {
 	sm := ServeMux{}
 	sm.ServeMux = http.DefaultServeMux
 	sm.routeHandlerMap = make(map[string]verbsHandlerList)
-	sm.pool = sac.Pool()
 
 	// The below applies the options if any were passed.
 	for _, opt := range options {
@@ -69,9 +68,9 @@ func (sm ServeMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		switch method {
 		case "GET":
 			// Let's create the datastore and then the execution context
-			rawS := sm.pool.Get()
-			S := rawS.(*sac.Instance)
-			aS := sacAdapter{S}
+
+			S := hmap.New()
+			aS := hmapAdapter{S}
 			ctx := execution.NewContext(aS)
 			if sm.timeout != 0 {
 				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
@@ -80,14 +79,12 @@ func (sm ServeMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			vh.get.ServeHTTP(ctx, w, req)
 			// Let's cleanup
 			ctx.Cancel()
-			S.Clear()
-			sm.pool.Put(S)
 
 		case "POST":
 			// Let's create the datastore and then the execution context
-			rawS := sm.pool.Get()
-			S := rawS.(*sac.Instance)
-			aS := sacAdapter{S}
+
+			S := hmap.New()
+			aS := hmapAdapter{S}
 			ctx := execution.NewContext(aS)
 			if sm.timeout != 0 {
 				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
@@ -96,14 +93,12 @@ func (sm ServeMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			vh.post.ServeHTTP(ctx, w, req)
 			// Let's cleanup
 			ctx.Cancel()
-			S.Clear()
-			sm.pool.Put(S)
 
 		case "PUT":
 			// Let's create the datastore and then the execution context
-			rawS := sm.pool.Get()
-			S := rawS.(*sac.Instance)
-			aS := sacAdapter{S}
+
+			S := hmap.New()
+			aS := hmapAdapter{S}
 			ctx := execution.NewContext(aS)
 			if sm.timeout != 0 {
 				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
@@ -112,14 +107,12 @@ func (sm ServeMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			vh.put.ServeHTTP(ctx, w, req)
 			// Let's cleanup
 			ctx.Cancel()
-			S.Clear()
-			sm.pool.Put(S)
 
 		case "PATCH":
 			// Let's create the datastore and then the execution context
-			rawS := sm.pool.Get()
-			S := rawS.(*sac.Instance)
-			aS := sacAdapter{S}
+
+			S := hmap.New()
+			aS := hmapAdapter{S}
 			ctx := execution.NewContext(aS)
 			if sm.timeout != 0 {
 				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
@@ -128,14 +121,12 @@ func (sm ServeMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			vh.patch.ServeHTTP(ctx, w, req)
 			// Let's cleanup
 			ctx.Cancel()
-			S.Clear()
-			sm.pool.Put(S)
 
 		case "DELETE":
 			// Let's create the datastore and then the execution context
-			rawS := sm.pool.Get()
-			S := rawS.(*sac.Instance)
-			aS := sacAdapter{S}
+
+			S := hmap.New()
+			aS := hmapAdapter{S}
 			ctx := execution.NewContext(aS)
 			if sm.timeout != 0 {
 				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
@@ -144,14 +135,12 @@ func (sm ServeMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			vh.delete.ServeHTTP(ctx, w, req)
 			// Let's cleanup
 			ctx.Cancel()
-			S.Clear()
-			sm.pool.Put(S)
 
 		case "HEAD":
 			// Let's create the datastore and then the execution context
-			rawS := sm.pool.Get()
-			S := rawS.(*sac.Instance)
-			aS := sacAdapter{S}
+
+			S := hmap.New()
+			aS := hmapAdapter{S}
 			ctx := execution.NewContext(aS)
 			if sm.timeout != 0 {
 				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
@@ -160,14 +149,12 @@ func (sm ServeMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			vh.head.ServeHTTP(ctx, w, req)
 			// Let's cleanup
 			ctx.Cancel()
-			S.Clear()
-			sm.pool.Put(S)
 
 		case "OPTIONS":
 			// Let's create the datastore and then the execution context
-			rawS := sm.pool.Get()
-			S := rawS.(*sac.Instance)
-			aS := sacAdapter{S}
+
+			S := hmap.New()
+			aS := hmapAdapter{S}
 			ctx := execution.NewContext(aS)
 			if sm.timeout != 0 {
 				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
@@ -176,14 +163,12 @@ func (sm ServeMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			vh.options.ServeHTTP(ctx, w, req)
 			// Let's cleanup
 			ctx.Cancel()
-			S.Clear()
-			sm.pool.Put(S)
 
 		case "CONNECT":
 			// Let's create the datastore and then the execution context
-			rawS := sm.pool.Get()
-			S := rawS.(*sac.Instance)
-			aS := sacAdapter{S}
+
+			S := hmap.New()
+			aS := hmapAdapter{S}
 			ctx := execution.NewContext(aS)
 			if sm.timeout != 0 {
 				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
@@ -192,14 +177,12 @@ func (sm ServeMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			vh.connect.ServeHTTP(ctx, w, req)
 			// Let's cleanup
 			ctx.Cancel()
-			S.Clear()
-			sm.pool.Put(S)
 
 		case "TRACE":
 			// Let's create the datastore and then the execution context
-			rawS := sm.pool.Get()
-			S := rawS.(*sac.Instance)
-			aS := sacAdapter{S}
+
+			S := hmap.New()
+			aS := hmapAdapter{S}
 			ctx := execution.NewContext(aS)
 			if sm.timeout != 0 {
 				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
@@ -208,8 +191,7 @@ func (sm ServeMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			vh.trace.ServeHTTP(ctx, w, req)
 			// Let's cleanup
 			ctx.Cancel()
-			S.Clear()
-			sm.pool.Put(S)
+
 		default:
 			http.Error(w, http.StatusText(405), 405)
 		}
@@ -492,14 +474,14 @@ func (h handlerchain) Link(l Handler) HandlerLinker {
 	return h
 }
 
-// sacAdapter is nothing but a wrapper around a sac Instance so that
+// hmapAdapter is nothing but a wrapper around a sac Instance so that
 // we can implement the execution.Storer interface fully (i.e. add a clone
 // method).
-type sacAdapter struct {
-	*sac.Instance
+type hmapAdapter struct {
+	hmap.Container
 }
 
-func (s sacAdapter) Clone() execution.Storer {
-	s.Instance = s.Instance.Clone()
-	return execution.Storer(s)
+func (h hmapAdapter) Clone() execution.Storer {
+	h.Container = h.Container.Clone()
+	return execution.Storer(h)
 }
