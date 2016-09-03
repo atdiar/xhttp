@@ -21,7 +21,7 @@ func Multiplexer() xhttp.ServeMux {
 
 	r := xhttp.NewServeMux()
 
-	session := New("thiusedfrtgju8975bj", DevStore())
+	session := NewHandler("thiusedfrtgju8975bj", DevStore())
 	r.USE(session)
 
 	r.GET("/", xhttp.HandlerFunc(func(ctx execution.Context, res http.ResponseWriter, req *http.Request) {

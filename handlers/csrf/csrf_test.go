@@ -20,8 +20,8 @@ func TestAntiCSRF(t *testing.T) {
 	//############################################################################
 
 	// Let's create the session and CSRF request handlers
-	session := session.New("inhjfgnjikt9864687", session.DevStore())
-	anticsrf := New(session).LaxMode()
+	session := session.NewHandler("inhjfgnjikt9864687", session.DevStore())
+	anticsrf := NewHandler(session).LaxMode()
 
 	// Let's create the multiplexer and declare the routes
 	r := xhttp.NewServeMux()

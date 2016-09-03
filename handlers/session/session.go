@@ -24,7 +24,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
-	"log"
 	"net/http"
 	"time"
 
@@ -98,18 +97,16 @@ type Handler struct {
 	uuidgen func() string
 
 	Data data
+
+	// Log allows for the registration of a logging function.
+	// The function probably needs to be safe for concurrent use.
+	Log  func(data ...interface{})
 	next xhttp.Handler
 }
 
-// Link enables the linking of a xhttp.Handler to the session Handler.
-func (h Handler) Link(hn xhttp.Handler) xhttp.HandlerLinker {
-	h.next = hn
-	return h
-}
-
-// New returns a request handler which implements a server session
+// NewHandler returns a request handler which implements a server session
 // initialized with defaults.
-func New(secret string, s Store) Handler {
+func NewHandler(secret string, s Store) Handler {
 	h := Handler{}
 
 	// Defaults (session cookie by default)
@@ -190,7 +187,9 @@ func (h Handler) Get(key string) ([]byte, error) {
 
 	err = h.Cache.Put(h.Data.GetID(), key, res)
 	if err != nil {
-		log.Print(err) // log that caching failed.. TODO: build/plug-in a more powerful error logging system/service interface.
+		if h.Log != nil {
+			h.Log(err)
+		}
 	}
 
 	return res, nil
@@ -210,7 +209,10 @@ func (h Handler) Put(key string, value []byte) error {
 
 	err = h.Cache.Put(h.Data.GetID(), key, value)
 	if err != nil {
-		log.Print(err) // Putting a value into the cache may not succeed. It's OK. Just log it as weird behaviour.
+		// Putting a value into the cache may not succeed. It's OK. Just log it as weird behaviour.
+		if h.Log != nil {
+			h.Log(err)
+		}
 	}
 	return nil
 }
@@ -305,6 +307,9 @@ func (h *Handler) Load(ctx execution.Context, res http.ResponseWriter, req *http
 		if err != nil {
 			// TODO session is invalid. Maybe it has been tampered with
 			// log error and return invalid session error
+			if h.Log != nil {
+				h.Log(err)
+			}
 			return ErrBadCookie
 		}
 		h.Save(ctx, res, req)
@@ -360,6 +365,12 @@ func (h Handler) ServeHTTP(ctx execution.Context, res http.ResponseWriter, req *
 	if h.next != nil {
 		h.next.ServeHTTP(ctx, res, req)
 	}
+}
+
+// Link enables the linking of a xhttp.Handler to the session Handler.
+func (h Handler) Link(hn xhttp.Handler) xhttp.HandlerLinker {
+	h.next = hn
+	return h
 }
 
 // ComputeHmac256 returns a base64 Encoded MAC.

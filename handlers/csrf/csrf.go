@@ -34,13 +34,13 @@ type Handler struct {
 	next    xhttp.Handler
 }
 
-// New builds a new anti-CSRF request handler.
+// NewHandler builds a new anti-CSRF request handler.
 // Because this token should be saved as a session value and matched against in
 // order to  check the validity of a request, a fully parameterized session
 // Handler object should be passed as argument.
 // By default, the session cookie, holding the anti-CSRF value, is named
 // "ANTICSRF"
-func New(s session.Handler) Handler {
+func NewHandler(s session.Handler) Handler {
 	h := Handler{}
 	s = s.DisableCaching()
 	h.Session = s
