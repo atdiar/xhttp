@@ -2,7 +2,7 @@
 
 [![GoDoc](https://godoc.org/github.com/atdiar/xhttp/handlers/file?status.svg)](https://godoc.org/github.com/atdiar/xhttp/handlers/file)
 
-This package defines a fileserving request handler, aloowing to serve single files or
+This package defines a fileserving request handler, allowing to serve single files or
 whole directories.
 
 ##Dependencies
