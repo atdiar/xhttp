@@ -46,8 +46,14 @@ func Example() {
 		log.Fatal(err)
 	}
 
+	req2, err := http.NewRequest("HEAD", "http://example.com/", nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, req)
+	s.ServeHTTP(w, req2)
 
 	fmt.Printf("%d - %s", w.Code, w.Body.String())
 	// Output: 200 - OK OK OK A B C

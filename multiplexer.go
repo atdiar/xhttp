@@ -146,7 +146,7 @@ func (sm ServeMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
 			}
 			// Let's handle the request
-			vh.head.ServeHTTP(ctx, w, req)
+			vh.head.ServeHTTP(ctx, noBodyWriter{w}, req)
 			// Let's cleanup
 			ctx.Cancel()
 
@@ -252,6 +252,8 @@ func (t *transformableHandler) prepend(h HandlerLinker) {
 // HANDLER REGISTRATION
 
 // GET registers the request Handler for the servicing of http GET requests.
+// It also deals with the handling of HEAD requests which commands an identical
+// response to GET requests if not for the lack message-body.
 func (sm *ServeMux) GET(pattern string, h Handler) {
 
 	if h == nil {
@@ -264,6 +266,10 @@ func (sm *ServeMux) GET(pattern string, h Handler) {
 	}
 	routehandler.get.register(h)
 	routehandler.get.prepend(sm.catchAll)
+
+	routehandler.head.register(h)
+	routehandler.head.prepend(sm.catchAll)
+
 	sm.routeHandlerMap[pattern] = routehandler
 }
 
@@ -335,24 +341,6 @@ func (sm *ServeMux) DELETE(pattern string, h Handler) {
 
 	routehandler.delete.register(h)
 	routehandler.delete.prepend(sm.catchAll)
-	sm.routeHandlerMap[pattern] = routehandler
-
-}
-
-// HEAD registers the request Handler for the servicing of http HEAD requests.
-func (sm *ServeMux) HEAD(pattern string, h Handler) {
-
-	if h == nil {
-		panic("ERROR: Handler should not be nil.")
-	}
-
-	routehandler, ok := sm.routeHandlerMap[pattern]
-	if !ok {
-		sm.ServeMux.Handle(pattern, *sm)
-	}
-
-	routehandler.head.register(h)
-	routehandler.head.prepend(sm.catchAll)
 	sm.routeHandlerMap[pattern] = routehandler
 
 }
@@ -484,4 +472,16 @@ type hmapAdapter struct {
 func (h hmapAdapter) Clone() execution.Storer {
 	h.Container = h.Container.Clone()
 	return execution.Storer(h)
+}
+
+// noBodyWriter implements http.ResponseWriter but does not allow writing
+// a message-body in response to a http request. It is used to derive the
+// response to a HEAD request from the response that would be returned from a
+// GET request.
+type noBodyWriter struct {
+	http.ResponseWriter
+}
+
+func (nbw noBodyWriter) Write([]byte) (int, error) {
+	return 200, nil
 }
