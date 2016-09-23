@@ -110,6 +110,7 @@ type Cache interface {
 	Put(id string, hkey string, content []byte) error
 	Delete(id, hkey string) error
 	Clear()
+	SetExpiry(t time.Duration) error
 }
 ```
 ## Dependencies

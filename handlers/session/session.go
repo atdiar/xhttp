@@ -25,6 +25,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/atdiar/goroutine/execution"
@@ -58,6 +59,7 @@ type Cache interface {
 	Put(id string, hkey string, content []byte) error
 	Delete(id, hkey string) error
 	Clear()
+	ClearAfter(t time.Duration) error
 }
 
 // Store defines the interface that a session store should implement.
@@ -397,4 +399,70 @@ func VerifySignature(messageb64, messageMAC, secret string) (bool, error) {
 // This is unsuitable for use in production.
 func DevStore() localmemstore.Store {
 	return localmemstore.New()
+}
+
+// DevCache returns an in-app cache datastructure accessible via the Cache interface.
+// It may be okay for production use under certain conditions.
+func DevCache() Cache {
+	return devCache{
+		store:       localmemstore.New(),
+		timeout:     10 * time.Minute,
+		willClearAt: time.Now().Add(10 * time.Minute),
+		mu:          new(sync.Mutex),
+	}
+}
+
+type devCache struct {
+	store       localmemstore.Store
+	timeout     time.Duration
+	willClearAt time.Time
+	mu          *sync.Mutex
+}
+
+func (d devCache) Get(id, key string) (res []byte, err error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if time.Now().After(d.willClearAt) {
+		d.store.Clear()
+		d.willClearAt = time.Now().Add(d.timeout)
+		return nil, errors.New("NOTFOUND")
+	}
+	return d.store.Get(id, key)
+}
+
+func (d devCache) Put(id string, key string, value []byte) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if time.Now().After(d.willClearAt) {
+		d.store.Clear()
+		d.willClearAt = time.Now().Add(d.timeout)
+	}
+	return d.store.Put(id, key, value)
+}
+
+func (d devCache) Delete(id, key string) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if time.Now().After(d.willClearAt) {
+		d.store.Clear()
+		d.willClearAt = time.Now().Add(d.timeout)
+	}
+	return d.store.Delete(id, key)
+}
+
+func (d devCache) Clear() {
+	d.mu.Lock()
+	d.store.Clear()
+	d.willClearAt = time.Now().Add(d.timeout)
+	d.mu.Unlock()
+}
+
+func (d devCache) ClearAfter(t time.Duration) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.timeout = t
+	if timing := time.Now().Add(t); timing.Before(d.willClearAt) {
+		d.willClearAt = timing
+	}
+	return nil
 }
