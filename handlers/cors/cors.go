@@ -66,6 +66,11 @@ type Handler struct {
 // response to a Cross-Origin request.
 // "*" is used to denote that anything is accepted (resp. Headers, Methods,
 // Content-Types).
+// The fields AllowedOrigins, AllowedHeaders, AllowedMethods, ExposeHeaders and
+// AllowedContentTypes are sets of strings. A string may be inserted by using
+// the `Add(str string, caseSensitive bool)` method.
+// It is also possible to lookup for the existence of a string within a set
+// thanks to the `Contains(str string, caseSensitive bool)` method.
 type Parameters struct {
 	AllowedOrigins      set
 	AllowedHeaders      set
@@ -129,7 +134,7 @@ func (p *PreflightHandler) ServeHTTP(ctx execution.Context, w http.ResponseWrite
 		return
 	}
 
-	// The opreflight request is a preparation step that verifies that the request
+	// The preflight request is a preparation step that verifies that the request
 	// obseves the requirement from the server in terms of origin, method, headers
 	// 1. The server shall check that the origin is accepted (case sensitive match
 	// in allowed headers).
