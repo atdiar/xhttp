@@ -57,7 +57,7 @@ var (
 // CORS controls the access to resources available on the server by defining
 // constraints (request origin, http methods allowed, headers allowed, etc.)
 type Handler struct {
-	Parameters
+	*Parameters
 	Preflight *PreflightHandler
 	next      xhttp.Handler
 }
@@ -86,7 +86,6 @@ type PreflightHandler struct {
 	*Parameters
 	MxAge time.Duration
 	mux   *xhttp.ServeMux
-	pat   string
 
 	next xhttp.Handler
 }
@@ -96,36 +95,38 @@ type PreflightHandler struct {
 func (p *PreflightHandler) MaxAge(t time.Duration) {
 	// Implementation which should set the Access-Control-Max-Age header in sec.
 	// (in the allowed headers)
-	p.AllowedHeaders.Add("Access-Control-Max-Age")
+	p.Parameters.AllowedHeaders.Add("Access-Control-Max-Age")
 	p.MxAge = t
 
 }
 
 // NewHandler creates a new, CORS policy enforcing, request handler.
-// By default, it enables Cross site simple requests without preflight.
 func NewHandler() Handler {
 	h := Handler{}
-	h.Parameters.AllowedOrigins = newSet().Add("*")
+	h.Parameters = new(Parameters)
+	h.Parameters.AllowedOrigins = newSet()
 	h.Parameters.AllowedHeaders = newSet().Add("Accept", "Accept-Language", "Content-Language", "Content-Type", "Origin")
 	h.Parameters.AllowedContentTypes = newSet().Add("application/x-www-form-urlencoded", "multipart/form-data", "text/plain")
+	h.Parameters.ExposeHeaders = newSet()
+	h.Parameters.AllowedMethods = newSet()
 	return h
 }
 
 // EnablePreflight will allow the handling of preflighted requests via the
 // OPTIONS http method.
 // Preflight result mayt be cached by the client
-func (h Handler) EnablePreflight(mux *xhttp.ServeMux, endpoint string) {
+func (h Handler) EnablePreflight(mux *xhttp.ServeMux, endpoint string) Handler {
 	h.Preflight = new(PreflightHandler)
-	h.Preflight.Parameters = &h.Parameters
+	h.Preflight.Parameters = h.Parameters
 	h.Preflight.MxAge = 10 * time.Minute
-
-	h.Preflight.Parameters.AllowedMethods = h.AllowedMethods.Add("OPTIONS")
-	h.Preflight.AllowedHeaders.Add("Origin", "Access-Control-Request-Method", "Access-Control-Request-Headers")
+	h.Preflight.mux = mux
 
 	mux.OPTIONS(endpoint, h.Preflight)
+	return h
 }
 
 func (p *PreflightHandler) ServeHTTP(ctx execution.Context, w http.ResponseWriter, r *http.Request) {
+
 	// Check Headers: Origin, Access-Control-Request-Method, Access-Control-Request-Headers
 	if !originIsPresent(r) {
 		if p.next != nil {
@@ -135,16 +136,11 @@ func (p *PreflightHandler) ServeHTTP(ctx execution.Context, w http.ResponseWrite
 	}
 
 	// The preflight request is a preparation step that verifies that the request
-	// obseves the requirement from the server in terms of origin, method, headers
-	// 1. The server shall check that the origin is accepted (case sensitive match
-	// in allowed headers).
-	// If not, the request cannot be processed further.
-	// 2. Check Access-Control-Request-Method. If absent, just return. The
-	// response to the preflight will not have the necessary headers and the
-	// user-agent will be able to determine that something went wrong.
-	// 3.
+	// observes the requirement from the server in terms of origin, method, headers
 
 	// Checking origin
+	w.Header().Add("Vary", "Origin")
+
 	origin, ok := (textproto.MIMEHeader(r.Header))["Origin"]
 	if !ok {
 		if p.next != nil {
@@ -164,6 +160,8 @@ func (p *PreflightHandler) ServeHTTP(ctx execution.Context, w http.ResponseWrite
 	}
 
 	// Checking method
+	w.Header().Add("Vary", "Access-Control-Request-Method")
+
 	method, ok := (textproto.MIMEHeader(r.Header))["Access-Control-Request-Method"]
 	if !ok {
 		if p.next != nil {
@@ -183,6 +181,8 @@ func (p *PreflightHandler) ServeHTTP(ctx execution.Context, w http.ResponseWrite
 	}
 
 	// Checking headers
+	w.Header().Add("Vary", "Access-Control-Request-Headers")
+
 	headers, ok := (textproto.MIMEHeader(r.Header))["Access-Control-Request-Headers"]
 	if !ok {
 		if p.next != nil {
@@ -190,6 +190,7 @@ func (p *PreflightHandler) ServeHTTP(ctx execution.Context, w http.ResponseWrite
 		}
 		return
 	}
+
 	headersallowed := p.Parameters.AllowedHeaders.Contains(headers[0], false)
 	for _, header := range headers {
 		headersallowed = headersallowed && p.Parameters.AllowedHeaders.Contains(header, false)
@@ -204,14 +205,14 @@ func (p *PreflightHandler) ServeHTTP(ctx execution.Context, w http.ResponseWrite
 		return
 	}
 
-	// Setting the apporpriate Headers on the HTTP response
+	// Setting the appropriate Headers on the HTTP response
 	setAllowCredentials(w, p.Parameters.AllowCredentials)
 
 	if p.MxAge != 0 {
 		setMaxAge(w, int(p.MxAge.Seconds()))
 	}
 
-	w.Header().Add("Access-Control-Allow-Methods", method[0])
+	w.Header().Set("Access-Control-Allow-Methods", method[0])
 	for _, header := range headers {
 		w.Header().Add("Access-Control-Allow-Headers", header)
 	}
@@ -235,6 +236,8 @@ func (h Handler) WithCredentials() Handler {
 }
 
 func (h Handler) ServeHTTP(ctx execution.Context, w http.ResponseWriter, r *http.Request) {
+	w.Header().Add("Vary", "Origin")
+
 	if !originIsPresent(r) {
 		if h.next != nil {
 			h.next.ServeHTTP(ctx, w, r)
@@ -253,10 +256,9 @@ func (h Handler) ServeHTTP(ctx execution.Context, w http.ResponseWriter, r *http
 			}
 		}
 	}
-
-	setAllowOrigin(w, r, h.AllowedOrigins)
-	setAllowCredentials(w, h.AllowCredentials)
-	setExposeHeaders(w, h.ExposeHeaders)
+	setAllowOrigin(w, r, h.Parameters.AllowedOrigins)
+	setAllowCredentials(w, h.Parameters.AllowCredentials)
+	setExposeHeaders(w, h.Parameters.ExposeHeaders)
 
 	if h.next != nil {
 		h.next.ServeHTTP(ctx, w, r)
@@ -272,7 +274,17 @@ func (h Handler) Link(hn xhttp.Handler) xhttp.HandlerLinker {
 // setAllowOrigin will write the Access-Control-Allow-Origin header assigning to
 // it the correct value.
 func setAllowOrigin(w http.ResponseWriter, r *http.Request, AllowedOrigins set) {
-	ori := textproto.MIMEHeader(r.Header).Get("Origin")
+	header := textproto.MIMEHeader(r.Header)
+	origin, ok := header["Origin"]
+	if !ok {
+		return
+	}
+
+	if len(origin) != 1 {
+		return
+	}
+
+	ori := origin[0]
 
 	if !AllowedOrigins.Contains(ori, true) {
 		if AllowedOrigins.Contains("*", true) {
@@ -318,7 +330,7 @@ func setExposeHeaders(w http.ResponseWriter, s set) {
 }
 
 // setAllowCredentials writes out the Access-Control-Allow-Credentials header which
-// indicates whether the the actual request can include user credentials (in the
+// indicates whether the actual request can include user credentials (in the
 // case of a preflighted request).
 // Otherwise (no preflight), it indicates whether the response can be exposed.
 //

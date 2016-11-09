@@ -25,6 +25,8 @@ server allows (by Origin, by Headers, Content-type, etc.)
 A CORS Handler controls the access to resources available on the server by defining
 constraints (request origin, http methods allowed, headers allowed, etc.)
 
+
+
 ```go
 type Handler struct {
 	Parameters
@@ -32,6 +34,7 @@ type Handler struct {
 	next      xhttp.Handler
 }
 ```
+The `Parameter` field holds the configuration options.
 
 ```go
 
@@ -75,6 +78,9 @@ type PreflightHandler struct {
 The preflight result may be cached on the user-agent and it is even possible to
 pick for how long the result will stay valid in cache.
 The handler is automatically registered on the OPTION method of a xhttp.ServeMux
+
+It is likely that this handler will be registered early in the the request-handling chain.
+Registration is only for an **explicitly** given path.
 
 ##Dependencies
 
