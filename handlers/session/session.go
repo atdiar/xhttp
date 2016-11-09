@@ -358,6 +358,10 @@ func (h *Handler) Generate(ctx execution.Context, res http.ResponseWriter, req *
 
 // ServeHTTP effectively makes the session a xhttp request handler.
 func (h Handler) ServeHTTP(ctx execution.Context, res http.ResponseWriter, req *http.Request) {
+	// We want any potential caching system to remain aware of changes to the
+	// cookie header. As such, we have to add a Vary header.
+	res.Header().Add("Vary", "Cookie")
+
 	err := h.Load(ctx, res, req)
 
 	if err != nil {

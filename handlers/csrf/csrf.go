@@ -103,6 +103,10 @@ func (h Handler) TokenFromCtx(ctx execution.Context) (string, error) {
 
 // ServeHTTP handles the servicing of incoming http requests.
 func (h Handler) ServeHTTP(ctx execution.Context, res http.ResponseWriter, req *http.Request) {
+	// We want any potential caching system to remain aware of changes to the
+	// cookie header. As such, we have to add a Vary header.
+	res.Header().Add("Vary", "Cookie")
+
 	// First we have to load the session data.
 	// Indeed, we want to register the CSRF token as a session value.
 	// For this, we need to use the most recently generated session id.
