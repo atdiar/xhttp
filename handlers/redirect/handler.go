@@ -3,6 +3,7 @@ package redirect
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/atdiar/goroutine/execution"
 	"github.com/atdiar/xhttp"
@@ -36,4 +37,11 @@ func (h Handler) ServeHTTP(ctx execution.Context, w http.ResponseWriter, r *http
 func (h Handler) Link(nh xhttp.Handler) xhttp.HandlerLinker {
 	h.next = nh
 	return h
+}
+
+// ToHTTPS returns a traffic redirecting handler that amkes sure that the web
+// traffic between the client and the server uses a secure data transport
+// protocol.
+func ToHTTPS(r *http.Request) Handler {
+	return NewHandler(strings.Replace(r.URL.String(), "http://", "https://", 1), 302)
 }

@@ -78,6 +78,8 @@ func (cw compressingWriter) Close() error {
 	return err
 }
 
+func (cw compressingWriter) Wrappee() http.ResponseWriter { return cw.ResponseWriter }
+
 // ServeHTTP handles a http.Request by gzipping the http response body and
 // setting the right http Headers.
 func (g Gzipper) ServeHTTP(ctx execution.Context, w http.ResponseWriter, req *http.Request) {

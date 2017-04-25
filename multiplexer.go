@@ -482,6 +482,6 @@ type noBodyWriter struct {
 	http.ResponseWriter
 }
 
-func (nbw noBodyWriter) Write([]byte) (int, error) {
-	return 200, nil
-}
+func (nbw noBodyWriter) Write([]byte) (int, error) { return 200, nil }
+
+func (nbw noBodyWriter) Wrappee() http.ResponseWriter { return nbw.ResponseWriter }
