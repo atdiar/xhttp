@@ -40,4 +40,4 @@ This package depends on:
 * [xhttp package](https://github.com/atdiar/xhttp)
 
 ## License
-MIT
+BSD 3-clause

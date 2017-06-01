@@ -1,4 +1,4 @@
-#cors
+# cors
 
 [![GoDoc](https://godoc.org/github.com/atdiar/xhttp/handlers/cors?status.svg)](https://godoc.org/github.com/atdiar/xhttp/handlers/cors)
 
@@ -82,7 +82,7 @@ The handler is automatically registered on the OPTION method of a xhttp.ServeMux
 It is likely that this handler will be registered early in the the request-handling chain.
 Registration is only for an **explicitly** given path.
 
-##Dependencies
+## Dependencies
 
 * [Package xhttp]
 * [Package execution]
@@ -90,9 +90,9 @@ Registration is only for an **explicitly** given path.
 These are the only two external dependencies required as they are necessary
 to take into account the execution context of a request-handling goroutine.
 
-##License
+## License
 
-MIT
+BSD 3-clause
 
 [Package xhttp]:http://github.com/atdiar/xhttp
 [Package execution]:http://github.com/atdiar/goroutine/execution

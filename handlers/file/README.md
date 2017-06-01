@@ -15,7 +15,7 @@ to take into account the execution context of a request-handling goroutine.
 
 ##License
 
-MIT
+BSD 3-clause
 
 [Package xhttp]:http://github.com/atdiar/xhttp
 [Package execution]:http://github.com/atdiar/goroutine/execution

@@ -1,4 +1,4 @@
-#compression
+# compression
 
 [![GoDoc](https://godoc.org/github.com/atdiar/xhttp/handlers/compression?status.svg)](https://godoc.org/github.com/atdiar/xhttp/handlers/compression)
 
@@ -11,7 +11,7 @@ package, by implementing the xhttp.HandlerLinker interface.
 It is possible to disable gzip compression for some request methods in order to avoid some
 CSRF vulnerabilities.
 
-##How to use it?
+## How to use it?
 
 It is typically used early in the request handling process as a catch-all-routes
 handler.
@@ -26,7 +26,7 @@ compressor := compression.NewHandler().Skip("POST")
 mux.USE(compressor)
 
 ```
-##Dependencies
+## Dependencies
 
 * [Package xhttp]
 * [Package execution]
@@ -34,9 +34,9 @@ mux.USE(compressor)
 These are the only two external dependencies required as they are necessary
 to take into account the execution context of a request-handling goroutine.
 
-##License
+## License
 
-MIT
+BSD 3-clause
 
 [Package xhttp]:http://github.com/atdiar/xhttp
 [Package execution]:http://github.com/atdiar/goroutine/execution

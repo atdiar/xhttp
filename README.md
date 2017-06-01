@@ -1,15 +1,15 @@
-#xhttp
+# xhttp
 
 [![GoDoc](https://godoc.org/github.com/atdiar/xhttp/gddo?status.svg)](http://godoc.org/github.com/atdiar/xhttp)
 
-##Description
+## Description
 
 This package defines a wrapper around the `*http.ServeMux` that can be found
 in Go's Standard library. The goal is to provide convenience methods to
 register request handlers and facilitate the usage of an execution context
 per goroutine spawned (which should be the norm).
 
-##What are the main additions compared to net/http?
+## What are the main additions compared to net/http?
 
 The ServeMux wrapper allows to define a deadline for the completion of
 subtasks that would be launched on behalf of the request handling goroutine.
@@ -42,7 +42,7 @@ Link(h Handler) HandlerLinker
 
 ```
 
-##Convenience methods
+## Convenience methods
 
 As a wrapper around `*http.ServeMux`, we have defined several methods that
 should render the task of registering request handlers per route and verb easier.
@@ -72,7 +72,7 @@ s.USE(handlerlinkerD)
 
 ```
 
-##More about chaining/linking Handler objects
+## More about chaining/linking Handler objects
 
 If a given route & request.Method requires a response to be processed
 by a chain of handlers, the `xhttp.Chain` function can be used to create such
@@ -83,10 +83,10 @@ postHandler := xhttp.Chain(hlinkerA, hlinkerB, hlinkerC).Link(Handler)
 s.POST("/foobar", postHandler)
 ```
 
-##Basic Handlers
+## Basic Handlers
 
 The `/handler/` subfolder contains some general use request handlers
 for response compression, CSRF protection, session management,...
 
 ## License
-MIT
+BSD 3-clause
