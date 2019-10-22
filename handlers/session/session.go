@@ -279,7 +279,7 @@ func (h *Handler) SetExpiry(t time.Duration) error {
 // DataFromCtx tries to recover the session data that would have been
 // saved within an execution.Context datastore, as is usually the case.
 func (h Handler) DataFromCtx(ctx execution.Context) (d data, err error) {
-	v, err := ctx.Get(h.Cookie.Name)
+	v, err := ctx.Get(h.Cookie)
 	if err != nil {
 		return d, err
 	}
@@ -293,9 +293,9 @@ func (h Handler) DataFromCtx(ctx execution.Context) (d data, err error) {
 // Load will try to recover the session handler state if it was previously
 // handled. Otherwise, it will try loading the metadata directly from the request
 // object if it exists. If none works, an error is returned.
-// Not safe for concurrent use by multiple goroutines. (Would not make sense)
+// Not safe for concurrent use by multiple goroutines.
 func (h *Handler) Load(ctx execution.Context, res http.ResponseWriter, req *http.Request) error {
-	dt, err := ctx.Get(h.Cookie.Name)
+	dt, err := ctx.Get(h.Cookie)
 
 	if err != nil {
 		// in this case, there is no session already laoded and saved.
@@ -332,7 +332,7 @@ func (h *Handler) Save(ctx execution.Context, res http.ResponseWriter, req *http
 	h.Cookie.Value = h.Data.Encode(h.Secret)
 	http.SetCookie(res, &(h.Cookie))
 	h.Data.SetIsUpdated(false)
-	ctx.Put(h.Cookie.Name, h.Data)
+	ctx.Put(h.Cookie, h.Data)
 }
 
 // Generate creates a completely new session.

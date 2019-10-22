@@ -3,7 +3,6 @@ package redirect
 
 import (
 	"net/http"
-	"strings"
 
 	"github.com/atdiar/goroutine/execution"
 	"github.com/atdiar/xhttp"
@@ -16,8 +15,8 @@ type Handler struct {
 	next   xhttp.Handler
 }
 
-// NewHandler returns a redirecting request handler.
-func NewHandler(urlstr string, code int) Handler {
+// To returns a redirecting request handler.
+func To(urlstr string, code int) Handler {
 	return Handler{
 		URLstr: urlstr,
 		Code:   code,
@@ -28,7 +27,6 @@ func NewHandler(urlstr string, code int) Handler {
 func (h Handler) ServeHTTP(ctx execution.Context, w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, h.URLstr, h.Code)
 	if h.next != nil {
-		h.next.ServeHTTP(ctx, w, r)
 	}
 }
 
@@ -37,11 +35,4 @@ func (h Handler) ServeHTTP(ctx execution.Context, w http.ResponseWriter, r *http
 func (h Handler) Link(nh xhttp.Handler) xhttp.HandlerLinker {
 	h.next = nh
 	return h
-}
-
-// ToHTTPS returns a traffic redirecting handler that amkes sure that the web
-// traffic between the client and the server uses a secure data transport
-// protocol.
-func ToHTTPS(r *http.Request) Handler {
-	return NewHandler(strings.Replace(r.URL.String(), "http://", "https://", 1), 302)
 }

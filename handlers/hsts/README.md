@@ -1,9 +1,8 @@
-# file
+# hsts
 
-[![GoDoc](https://godoc.org/github.com/atdiar/xhttp/handlers/file?status.svg)](https://godoc.org/github.com/atdiar/xhttp/handlers/file)
+[![GoDoc](https://godoc.org/github.com/atdiar/xhttp/handlers/hsts?status.svg)](https://godoc.org/github.com/atdiar/xhttp/handlers/hsts)
 
-This package defines a fileserving request handler, allowing to serve single files or
-whole directories.
+This package defines a hsts enabling request handler for strict transport security.
 
 ## Dependencies
 

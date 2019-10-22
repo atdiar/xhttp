@@ -8,8 +8,8 @@ import (
 	"github.com/atdiar/xhttp"
 )
 
-// Handler returns a xhttp.Handler whcih sole purpose is to remove a given
-// prefix form the http request URL path.
+// Handler returns a xhttp.Handler which sole purpose is to remove a given
+// prefix from the http request URL path.
 // If the prefix does not exist, a 404 HTTP error is sent.
 type Handler struct {
 	prefix string

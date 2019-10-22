@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/atdiar/goroutine/execution"
-	"github.com/atdiar/hmap"
 )
 
 // ServeMux holds the multiplexing logic of incoming http requests.
@@ -69,8 +68,7 @@ func (sm ServeMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		case "GET":
 			// Let's create the datastore and then the execution context
 
-			S := hmap.New()
-			aS := hmapAdapter{S}
+			aS := execution.NewDefaultStorer()
 			ctx := execution.NewContext(aS)
 			if sm.timeout != 0 {
 				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
@@ -83,8 +81,7 @@ func (sm ServeMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		case "POST":
 			// Let's create the datastore and then the execution context
 
-			S := hmap.New()
-			aS := hmapAdapter{S}
+			aS := execution.NewDefaultStorer()
 			ctx := execution.NewContext(aS)
 			if sm.timeout != 0 {
 				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
@@ -97,8 +94,7 @@ func (sm ServeMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		case "PUT":
 			// Let's create the datastore and then the execution context
 
-			S := hmap.New()
-			aS := hmapAdapter{S}
+			aS := execution.NewDefaultStorer()
 			ctx := execution.NewContext(aS)
 			if sm.timeout != 0 {
 				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
@@ -111,8 +107,7 @@ func (sm ServeMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		case "PATCH":
 			// Let's create the datastore and then the execution context
 
-			S := hmap.New()
-			aS := hmapAdapter{S}
+			aS := execution.NewDefaultStorer()
 			ctx := execution.NewContext(aS)
 			if sm.timeout != 0 {
 				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
@@ -125,8 +120,7 @@ func (sm ServeMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		case "DELETE":
 			// Let's create the datastore and then the execution context
 
-			S := hmap.New()
-			aS := hmapAdapter{S}
+			aS := execution.NewDefaultStorer()
 			ctx := execution.NewContext(aS)
 			if sm.timeout != 0 {
 				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
@@ -139,8 +133,7 @@ func (sm ServeMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		case "HEAD":
 			// Let's create the datastore and then the execution context
 
-			S := hmap.New()
-			aS := hmapAdapter{S}
+			aS := execution.NewDefaultStorer()
 			ctx := execution.NewContext(aS)
 			if sm.timeout != 0 {
 				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
@@ -153,8 +146,7 @@ func (sm ServeMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		case "OPTIONS":
 			// Let's create the datastore and then the execution context
 
-			S := hmap.New()
-			aS := hmapAdapter{S}
+			aS := execution.NewDefaultStorer()
 			ctx := execution.NewContext(aS)
 			if sm.timeout != 0 {
 				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
@@ -167,8 +159,7 @@ func (sm ServeMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		case "CONNECT":
 			// Let's create the datastore and then the execution context
 
-			S := hmap.New()
-			aS := hmapAdapter{S}
+			aS := execution.NewDefaultStorer()
 			ctx := execution.NewContext(aS)
 			if sm.timeout != 0 {
 				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
@@ -181,8 +172,7 @@ func (sm ServeMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		case "TRACE":
 			// Let's create the datastore and then the execution context
 
-			S := hmap.New()
-			aS := hmapAdapter{S}
+			aS := execution.NewDefaultStorer()
 			ctx := execution.NewContext(aS)
 			if sm.timeout != 0 {
 				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
@@ -462,18 +452,6 @@ func (h handlerchain) Link(l Handler) HandlerLinker {
 	return h
 }
 
-// hmapAdapter is nothing but a wrapper around a sac Instance so that
-// we can implement the execution.Storer interface fully (i.e. add a clone
-// method).
-type hmapAdapter struct {
-	hmap.Container
-}
-
-func (h hmapAdapter) Clone() execution.Storer {
-	h.Container = h.Container.Clone()
-	return execution.Storer(h)
-}
-
 // noBodyWriter implements http.ResponseWriter but does not allow writing
 // a message-body in response to a http request. It is used to derive the
 // response to a HEAD request from the response that would be returned from a
@@ -485,3 +463,27 @@ type noBodyWriter struct {
 func (nbw noBodyWriter) Write([]byte) (int, error) { return 200, nil }
 
 func (nbw noBodyWriter) Wrappee() http.ResponseWriter { return nbw.ResponseWriter }
+
+func patternMatch(path string, pattern string, vars map[string]string) bool {
+	pathsplit := strings.SplitN(path, "/", -1)
+	patternsplit := strings.SplitN(pattern, "/", -1)
+	if len(pathsplit) != len(patternsplit) {
+		return false
+	}
+	for i, str := range patternsplit {
+		if str[0:1] != ":" {
+			if str != pathsplit[i] {
+				return false
+			}
+		} else {
+			if vars != nil {
+				vars[str[1:]] = pathsplit[i]
+			}
+		}
+	}
+	return true
+}
+
+func PathMatch(req *http.Request, pattern string, vars map[string]string) bool {
+	return patternMatch(req.URL.EscapedPath(), pattern, vars)
+}
