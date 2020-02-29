@@ -1,93 +1,155 @@
-package googleoauth
+package xoauth2
 
 import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
-	"encoding/json"
-	"errors"
 	"log"
 	"net/http"
+	"time"
 
-	"github.com/atdiar/goroutine/execution"
+	"github.com/atdiar/xhttp"
 	"github.com/atdiar/xhttp/handlers/session"
+	"github.com/atdiar/xhttp/handlers/usersigning"
 	"golang.org/x/oauth2"
 )
 
 var (
-	TokenSessionKey = "oauthToken"
+	// Signin is the parameter value used to start an Authentication session for
+	// user authentication.
+	Signin = func() AuthReason { return "signin" }()
+
+	// Signup is the parameter value used to start an Authentification session for
+	// user registration.
+	Signup = func() AuthReason { return "signup" }()
+
+	// TokenKey is the key under which an oAuth Token is stored in a context
+	TokenKey tokenkey
 )
 
-type LoginHandler struct {
+// AuthReason defines an option type used to declare whether the authorization
+// request is for user registration (signup) or user authentication (signin).
+type AuthReason string
+
+type tokenkey struct{}
+
+// Authentifier defines a http request handler that will initiate the oAuth request.
+type Authentifier struct {
 	Session session.Handler
 	*oauth2.Config
-	AccessType    oauth2.AuthCodeOption
-	ApprovalForce oauth2.AuthCodeOption
+	Options []oauth2.AuthCodeOption
+	Log     *log.Logger
+	whatfor AuthReason
 }
 
+// CallbackHandler defines a http request handler that will deal with the
+// finalization of the oAuth request by saving the authorization token in the
+// session store and the context object and executing either user Authentication
+// (aka user signin) or user Registration (aka user signup).
 type CallbackHandler struct {
-	Session session.Handler
-	*oauth2.Config
-	Context context.Context
+	authentifier *Authentifier
+	signin       usersigning.Handler
+	signup       usersigning.Handler
+	next         xhttp.Handler
 }
 
-func NewHandlers(s session.Handler, c *oauth2.Config, ctx context.Context) (LoginHandler, CallbackHandler) {
-	return LoginHandler{s, c, nil, nil}, CallbackHandler{s, c, ctx}
+// NewRequest returns a new user Authentifier object that handles a http request
+// for user authentication.
+func NewRequest(s session.Handler, c *oauth2.Config, reason AuthReason) Authentifier {
+	return Authentifier{s, c, nil, nil, reason}
 }
 
-func (l LoginHandler) ServeHTTP(ctx execution.Context, w http.ResponseWriter, r *http.Request) {
+// WithOptions allows to add some options for the handling of Login.
+// For further information about these options, please refer to the oAuth2 package.
+func (l Authentifier) WithOptions(opt ...oauth2.AuthCodeOption) Authentifier {
+	l.Options = opt
+	return l
+}
+
+// ServeHTTP handles the request.
+func (l Authentifier) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	// !. Check if an authentification session has already been created.
+
 	state, err := generateNonce(32)
 	if err != nil {
-		log.Printf("Error generating oauth state variable: %v", err)
+		if l.Log != nil {
+			l.Log.Printf("Error generating oauth state variable: %v", err)
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	err = l.Session.Put("oauthstate", ([]byte)(state))
+	err = l.Session.Put("oauthstate", ([]byte)(state), 10*time.Minute)
 	if err != nil {
-		log.Printf("Error saving oauth state variable into session: %v", err)
+		if l.Log != nil {
+			l.Log.Printf("Error saving oauth state variable into session: %v", err)
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	url := l.Config.AuthCodeURL(state, l.AccessType, l.ApprovalForce)
+	url := l.Config.AuthCodeURL(state, l.Options...)
 	http.Redirect(w, r, url, http.StatusTemporaryRedirect)
 }
 
-func (c CallbackHandler) ServeHTTP(ctx execution.Context, w http.ResponseWriter, r *http.Request) {
-	rawstate, err := c.Session.Get("oauthstate")
+// Callback is a method of the Authentifier that returns a handler for the
+// callback route where a user is reirected once the oAuth login phase is done.
+func (l Authentifier) Callback(signin usersigning.Handler, signup usersigning.Handler) CallbackHandler {
+	return CallbackHandler{&l, signin, signup, nil}
+}
+
+// ServeHTTP handles the request.
+func (c CallbackHandler) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	rawstate, err := c.authentifier.Session.Get("oauthstate")
 	if err != nil {
-		log.Printf("Error recovering oauth state variable: %v", err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		if c.authentifier.Log != nil {
+			c.authentifier.Log.Printf("Error recovering oauth state variable: %v", err)
+		}
+		http.Error(w, "XOAUTH2:unable to recover authentication state", http.StatusInternalServerError)
+		return
 	}
+	c.authentifier.Session.Delete("oauthstate")
 	state := string(rawstate)
 	if r.FormValue("state") != state {
-		log.Print("Error : state variables are not equal")
-		http.Redirect(w, r, "/", http.StatusTemporaryRedirect)
+		if c.authentifier.Log != nil {
+			c.authentifier.Log.Print("Error : state variables are not equal")
+		}
+		http.Error(w, "XOAUTH2:bad state", http.StatusInternalServerError)
 		return
 	}
 
 	code := r.FormValue("code")
-	tok, err := c.Config.Exchange(c.Context, code)
+	tok, err := c.authentifier.Config.Exchange(ctx, code)
 	if err != nil {
-		log.Printf("Error while retrieving token: %v", err)
-		http.Redirect(w, r, "/", http.StatusTemporaryRedirect)
+		if c.authentifier.Log != nil {
+			c.authentifier.Log.Printf("Error while retrieving token: %v", err)
+		}
+		http.Error(w, "XOAUTH2:unable to complete authentication. Token missing.", http.StatusInternalServerError)
+		return
 	}
-	jtok, err := json.Marshal(*tok)
-	if err != nil {
-		log.Printf("Error marshalling oauth token: %v", err)
-		http.Redirect(w, r, "/", http.StatusTemporaryRedirect)
+	// Put token and http.Client into context object
+	ctx = context.WithValue(ctx, TokenKey, tok)
+	ctx = context.WithValue(ctx, oauth2.HTTPClient, c.authentifier.Config.Client(ctx, tok))
+
+	// TODO:  --------------------------------
+
+	// 2. INSERT SIGNUP/SIGNING LOGIC
+	switch c.authentifier.whatfor {
+	case Signin:
+		c.signin.ServeHTTP(ctx, w, r)
+	case Signup:
+		c.signup.ServeHTTP(ctx, w, r)
 	}
-	c.Session.Put(TokenSessionKey, jtok)
+	// TODO:  --------------------------------
+
+	if c.next != nil {
+		c.next.ServeHTTP(ctx, w, r)
+	}
 }
 
-func TokenFromSession(s session.Handler) (oauth2.Token, error) {
-	rawtoken, err := s.Get(TokenSessionKey)
-	if err != nil {
-		return oauth2.Token{}, errors.New("Could not retrieve token from Session.")
-	}
-	tok := &oauth2.Token{}
-	err = json.Unmarshal(rawtoken, tok)
-	return *tok, err
+// Link enables the linking of a xhttp.Handler to the CallbackHandler.
+func (c CallbackHandler) Link(hn xhttp.Handler) xhttp.HandlerLinker {
+	c.next = hn
+	return c
 }
 
 // generateNonce creates a base64 encoded version of a 32byte Cryptographically
@@ -123,7 +185,7 @@ type LoginRequester struct {
 	State         string // used to mitigate csrf attacks. Verified in callback handling.
 }
 
-// LoginHandler creates a new object that deals with user authentication for a
+// Authentifier creates a new object that deals with user authentication for a
 // given endpoint
 // If the http client argument is nil, the default http client will be used.
 func Login(c *oauth2.Config, client *http.Client, AccessType oauth2.AuthCodeOption, ApprovalForce oauth2.AuthCodeOption) (LoginRequester, CallbackHandler) {
@@ -141,7 +203,7 @@ func Login(c *oauth2.Config, client *http.Client, AccessType oauth2.AuthCodeOpti
 	h := CallbackHandler{c, ctx, t, "", nil}
 	return l, h
 }
-func (r LoginRequester) ServeHTTP(ctx execution.Context, w http.ResponseWriter, req *http.Request) {
+func (r LoginRequester) ServeHTTP(ctx context.Context, w http.ResponseWriter, req *http.Request) {
 	url := r.Config.AuthCodeURL(r.State, r.AccessType, r.ApprovalForce)
 	http.Redirect(w, req, url, http.StatusTemporaryRedirect)
 }
@@ -155,7 +217,7 @@ type CallbackHandler struct {
 	Apply     func([]byte) error // used to handle the response
 }
 
-func (h CallbackHandler) ServeHTTP(ctx execution.Context, w http.ResponseWriter, r *http.Request) {
+func (h CallbackHandler) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	state := r.FormValue("state")
 	if state != h.State {
 		fmt.Printf("invalid oauth state, expected '%s', got '%s'\n", h.State, state)

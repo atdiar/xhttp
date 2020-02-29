@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/atdiar/goroutine/execution"
+	"context"
+
 	"github.com/atdiar/xhttp"
-	"github.com/atdiar/xhttp/handlers/session"
 )
 
 func TestAntiCSRF(t *testing.T) {
@@ -20,25 +20,26 @@ func TestAntiCSRF(t *testing.T) {
 	//############################################################################
 
 	// Let's create the session and CSRF request handlers
-	session := session.NewHandler("inhjfgnjikt9864687", session.DevStore())
-	anticsrf := NewHandler(session).LaxMode()
+	anticsrf := NewHandler("nosurf", "secret")
 
 	// Let's create the multiplexer and declare the routes
 	r := xhttp.NewServeMux()
-	r.USE(session, anticsrf)
+	r.USE(anticsrf)
 
-	r.POST("/", xhttp.HandlerFunc(func(ctx execution.Context, res http.ResponseWriter, req *http.Request) {
-		token, err := anticsrf.TokenFromCtx(ctx)
+	r.POST("/", xhttp.HandlerFunc(func(ctx context.Context, res http.ResponseWriter, req *http.Request) {
+		token, err := anticsrf.CtxToken(ctx)
 		if err != nil {
-			panic(err)
+			t.Error(err.Error())
+			return
 		}
 		res.Write([]byte(token))
 	}))
 
-	r.GET("/", xhttp.HandlerFunc(func(ctx execution.Context, res http.ResponseWriter, req *http.Request) {
-		token, err := anticsrf.TokenFromCtx(ctx)
+	r.GET("/", xhttp.HandlerFunc(func(ctx context.Context, res http.ResponseWriter, req *http.Request) {
+		token, err := anticsrf.CtxToken(ctx)
 		if err != nil {
-			panic(err)
+			t.Error(err.Error())
+			return
 		}
 		res.Write([]byte(token))
 	}))
@@ -65,7 +66,7 @@ func TestAntiCSRF(t *testing.T) {
 	}
 	body := strings.TrimSpace(string(raw))
 
-	s := RetrieveCookie(res.Header, "ANTICSRF")
+	s := RetrieveCookie(res.Header, anticsrf.Header)
 	if s == nil {
 		t.Fatal("The anti-CSRF cookie does not exist. Weird!")
 	}
@@ -80,6 +81,7 @@ func TestAntiCSRF(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	res, err = http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -91,12 +93,14 @@ func TestAntiCSRF(t *testing.T) {
 	}
 	body = strings.TrimSpace(string(raw))
 
-	s = RetrieveCookie(res.Header, "ANTICSRF")
+	s = RetrieveCookie(res.Header, anticsrf.Header)
 	if s == nil {
 		t.Fatal("The anti-CSRF cookie does not exist. Weird!")
 	}
-	if body != invalidToken {
-		t.Fatalf("Expected failure: no antiCSRF header set. Got %v instead of %v", body, invalidToken)
+	if body != TokenInvalid {
+		if body != HeaderMissing {
+			t.Fatalf("Got %v instead of %v", body, TokenInvalid)
+		}
 	}
 
 	// Step 2: second POST request
@@ -120,7 +124,7 @@ func TestAntiCSRF(t *testing.T) {
 	}
 	body = strings.TrimSpace(string(raw))
 
-	s = RetrieveCookie(res.Header, "ANTICSRF")
+	s = RetrieveCookie(res.Header, anticsrf.Header)
 	if s == nil {
 		t.Fatal("The anti-CSRF cookie does not exist. Weird!")
 	}
@@ -154,14 +158,14 @@ func TestAntiCSRF(t *testing.T) {
 	}
 	body = strings.TrimSpace(string(raw))
 
-	s = RetrieveCookie(res.Header, "ANTICSRF")
+	s = RetrieveCookie(res.Header, anticsrf.Header)
 	if s == nil {
 		t.Fatal("The anti-CSRF cookie does not exist. Weird!")
 	}
 	if body == "" {
 		t.Fatal("Unexpected empty body.")
 	}
-	if body != invalidToken {
+	if body != TokenInvalid {
 		t.Fatal("Expected failure due to token invalidation.")
 	}
 
@@ -186,15 +190,15 @@ func TestAntiCSRF(t *testing.T) {
 	}
 	body = strings.TrimSpace(string(raw))
 
-	s = RetrieveCookie(res.Header, "ANTICSRF")
+	s = RetrieveCookie(res.Header, anticsrf.Header)
 	if s == nil {
 		t.Fatal("The anti-CSRF cookie does not exist. Weird!")
 	}
 	if body == "" {
 		t.Fatal("Unexpected empty body.")
 	}
-	if body != invalidToken {
-		t.Fatal("Expected failure due to token invalidation.")
+	if body != HeaderMissing {
+		t.Fatalf("Expected failure due to token invalidation but got %v", body)
 	}
 }
 

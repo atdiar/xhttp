@@ -1,11 +1,12 @@
 package panic
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
-	"github.com/atdiar/goroutine/execution"
 	"github.com/atdiar/xhttp"
 )
 
@@ -13,14 +14,14 @@ var Payload = "Panicked"
 
 func TestHandler(t *testing.T) {
 	mux := xhttp.NewServeMux()
-	mux.USE(NewHandler(func(ctx execution.Context, w http.ResponseWriter, r *http.Request) {
-		// do something remarkable
-		w.Write(([]byte)(Payload))
+	mux.USE(NewHandler(func(msg interface{}, ctx context.Context, w http.ResponseWriter, r *http.Request) {
+		// do something simple
+		_, _ = fmt.Fprint(w, msg)
 	}))
 
-	mux.GET("/", xhttp.HandlerFunc(func(ctx execution.Context, res http.ResponseWriter, req *http.Request) {
+	mux.GET("/", xhttp.HandlerFunc(func(ctx context.Context, res http.ResponseWriter, req *http.Request) {
 		// Let's just panic here and see if it is going to get handled as we expect.
-		panic("Whatever")
+		panic(Payload)
 	}))
 
 	// Request definition

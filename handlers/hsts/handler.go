@@ -5,7 +5,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/atdiar/goroutine/execution"
+	"context"
+
 	"github.com/atdiar/xhttp"
 )
 
@@ -25,7 +26,7 @@ func New(maxage int, withsubdomains bool) Handler {
 	}
 }
 
-func (h Handler) ServeHTTP(ctx execution.Context, w http.ResponseWriter, r *http.Request) {
+func (h Handler) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	if h.includeSubDomains {
 		w.Header().Add("Strict-Transport-Security", "max-age="+strconv.Itoa(h.m)+"; includeSubDomains")
 	} else {

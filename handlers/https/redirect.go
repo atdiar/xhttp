@@ -3,15 +3,18 @@ package https
 import (
 	"net/http"
 
-	"github.com/atdiar/goroutine/execution"
+	"context"
+
 	"github.com/atdiar/xhttp"
 )
 
+// Redirect is the handler which redirects all traffic stqrting with the http
+// scheme to https. It just needs to be dropped in the handler chain.
 type Redirect struct {
 	next xhttp.Handler
 }
 
-func (re Redirect) ServeHTTP(ctx execution.Context, w http.ResponseWriter, r *http.Request) {
+func (re Redirect) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	url := r.URL
 	sch := url.Scheme
 	if sch == "https" {

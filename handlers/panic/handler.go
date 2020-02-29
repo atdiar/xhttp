@@ -5,54 +5,39 @@ package panic
 import (
 	"net/http"
 
-	"github.com/atdiar/goroutine/execution"
+	"context"
+
 	"github.com/atdiar/xhttp"
 )
 
-// Handler allows for the logging of the unhandled error resulting from the
-// program panicking. It also allows for the registration of a specific
-// panic handling function.
-// The Log field is a function that can be setup in case the panic needs to be
-// recorded in a log file locally or externally.
+// Handler allows for the registration of a panic handling function.
 type Handler struct {
-	Handle func(ctx execution.Context, w http.ResponseWriter, r *http.Request)
-	Log    func(data ...interface{})
+	Handle func(msg interface{}, ctx context.Context, w http.ResponseWriter, r *http.Request)
 	next   xhttp.Handler
 }
 
 // NewHandler return an object used to take care of panics stemming from the
 // request handling process accomodated by a downstrean chain of registered
 // request handlers.
-func NewHandler(handler xhttp.HandlerFunc) Handler {
+func NewHandler(handler func(msg interface{}, ctx context.Context, w http.ResponseWriter, r *http.Request)) Handler {
 	return Handler{
-		Handle: handler.ServeHTTP,
-		Log:    nil,
+		Handle: handler,
 		next:   nil,
 	}
 }
 
-// WithLogging allows to provide a logging function that will be used to
-// record the error that explains why the request handling failed.
-func (h Handler) WithLogging(f func(data ...interface{})) Handler {
-	h.Log = f
-	return h
-}
-
 // ServeHTTP handles the servicing of incoming http requests.
-func (h Handler) ServeHTTP(ctx execution.Context, w http.ResponseWriter, r *http.Request) {
+func (h Handler) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	defer func() {
-		if err := recover(); err != nil {
-			h.Handle(ctx, w, r)
-			if h.Log != nil {
-				h.Log(err)
-			}
+		if errmsg := recover(); errmsg != nil {
+			h.Handle(errmsg, ctx, w, r)
 		}
 	}()
 	if h.next != nil {
 		h.next.ServeHTTP(ctx, w, r)
 		return
 	}
-	panic("Handler was ill-registered")
+	panic("Panic Handler was ill-registered")
 }
 
 // Link enables the linking of a xhttp.Handler. The linked object holds the

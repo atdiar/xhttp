@@ -4,7 +4,8 @@ package file
 import (
 	"net/http"
 
-	"github.com/atdiar/goroutine/execution"
+	"context"
+
 	"github.com/atdiar/xhttp"
 )
 
@@ -25,7 +26,7 @@ func NewServer(path string) Server {
 	}
 }
 
-func (s Server) ServeHTTP(ctx execution.Context, w http.ResponseWriter, r *http.Request) {
+func (s Server) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, s.pathname)
 	if s.next != nil {
 		s.next.ServeHTTP(ctx, w, r)

@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -8,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/atdiar/goroutine/execution"
+	"github.com/atdiar/testcache"
 	"github.com/atdiar/xhttp"
 )
 
@@ -17,34 +18,43 @@ const (
 	fakeSessionID2 = "sessionid123456"
 )
 
-func Multiplexer() xhttp.ServeMux {
+func Multiplexer(t *testing.T) xhttp.ServeMux {
 
 	r := xhttp.NewServeMux()
 
-	session := NewHandler("thiusedfrtgju8975bj", DevStore())
-	r.USE(session)
+	s := New("GSID", "secret", SetStore(testcache.TestStore())) // ("thiusedfrtgju8975bj", testcache.TestStore())
+	s.Cookie.Config.MaxAge = 86400
+	r.USE(s)
 
-	r.GET("/", xhttp.HandlerFunc(func(ctx execution.Context, res http.ResponseWriter, req *http.Request) {
+	r.GET("/", xhttp.HandlerFunc(func(ctx context.Context, res http.ResponseWriter, req *http.Request) {
 		// We do nothing here but a session cookie should have at least been set.
 	}))
 
-	r.POST("/", xhttp.HandlerFunc(func(ctx execution.Context, res http.ResponseWriter, req *http.Request) {
-		d, err := session.DataFromCtx(ctx)
-		if err != nil {
-			panic(err)
+	r.POST("/", xhttp.HandlerFunc(func(ctx context.Context, res http.ResponseWriter, req *http.Request) {
+		_, ok := ctx.Value(s.ContextKey).(http.Cookie)
+		if !ok {
+			//http.Error(res, ErrBadSession.Error(), 501)
+			t.Error("The session was not correctly setup")
 		}
-		d.SetID(fakeSessionID)
-		d.setExpiry(time.Now().Add(10 * time.Minute))
-		session.Data = d
-		session.Save(ctx, res, req)
 
-		res.Write([]byte(d.GetID()))
+		/*	_, err := s.Load(ctx, res, req)
+			if err != nil {
+				t.Error(err)
+			}*/
+		id, ok := s.Cookie.ID()
+		if !ok {
+			//http.Error(res, ErrNoID.Error(), 501)
+			t.Errorf("Expected an id of %v but it is %v as we're getting %v \n Cookie maxage is %v ", fakeSessionID, ok, id, s.Cookie.Config.MaxAge)
+		}
+		res.Write([]byte(id))
+
 	}))
+
 	return r
 }
 
 func TestSession(t *testing.T) {
-	r := Multiplexer()
+	r := Multiplexer(t)
 
 	// Initial request
 	req1, err := http.NewRequest("GET", "http://example.com/foo", nil)
@@ -60,35 +70,29 @@ func TestSession(t *testing.T) {
 	// initial one. However we expect a response that includes one, since
 	// a session should have been generated.
 	s := RetrieveCookie(w.Header(), "GSID")
+
 	if s == nil {
 		t.Error("The session cookie does not seem to have been set.")
 	}
 	if s.Name != "GSID" || s.Path != "/" || s.HttpOnly != true || s.Secure != true {
 		t.Error("The session cookie does not seem to have been set correctly.")
 	}
-	if s.MaxAge != 0 || !s.Expires.IsZero() {
-		t.Error("Session Cookie was uncorrectly set.")
+	if s.MaxAge != 86400 {
+		t.Errorf("Session Cookie was uncorrectly set. Got %v and wanted %v", s.MaxAge, 86400)
 	}
 
 	// Second request
 	// We send with the request the session cookie that was previously sent with
 	// the response.
 	// We expect a 30X response testifying that all went well.
-	req2, err := http.NewRequest("POST", "http://example.com/bar", nil)
+	req2, err := http.NewRequest("POST", "http://example.com/", nil)
 	if err != nil {
-		t.Fatal(err)
+		t.Error(err)
 	}
-	req2.AddCookie(&http.Cookie{
-		Name:   "GSID",
-		Path:   "/",
-		Secure: true,
-		MaxAge: 0,
-		Value:  s.Value,
-	})
+
 	r.ServeHTTP(w, req2)
-	if str := w.Body.String(); str != fakeSessionID {
-		t.Errorf("Expected %s but got %s", fakeSessionID, str)
-	}
+	str := w.Body.String()
+
 	// The session cookie should not change.
 	s = RetrieveCookie(w.Header(), "GSID")
 	if s == nil {
@@ -97,7 +101,7 @@ func TestSession(t *testing.T) {
 	if s.Name != "GSID" || s.Path != "/" || s.HttpOnly != true || s.Secure != true {
 		t.Error("The session cookie does not seem to have been set correctly.")
 	}
-	if s.MaxAge != 0 || !s.Expires.IsZero() {
+	if s.MaxAge != 86400 {
 		t.Error("Session Cookie was uncorrectly set.")
 	}
 
@@ -112,9 +116,9 @@ func TestSession(t *testing.T) {
 		Path:   "/",
 		Secure: true,
 		MaxAge: 0,
-		Value:  "whatever floats the boat",
+		Value:  "hjfhfhdfh:gjfjghfgjh",
 	})
-
+	w = httptest.NewRecorder()
 	r.ServeHTTP(w, req3)
 
 	ns := RetrieveCookie(w.Header(), "GSID")
@@ -124,13 +128,15 @@ func TestSession(t *testing.T) {
 	if ns.Name != "GSID" || ns.Path != "/" || ns.HttpOnly != true || ns.Secure != true {
 		t.Error("The session cookie does not seem to have been set correctly.")
 	}
-	if ns.MaxAge != 0 || !ns.Expires.IsZero() {
+	if ns.MaxAge != 86400 {
 		t.Error("Session Cookie was uncorrectly set.")
 	}
 	if ns.Value == s.Value {
 		t.Errorf("Expected a new cookie value: \n %s \n but got: \n %s \n", ns.Value, s.Value)
 	}
-
+	if body := w.Body.String(); body == str {
+		t.Errorf("Expected different values but got the same id: %v vs %v", body, str)
+	}
 }
 
 // #############################################################################

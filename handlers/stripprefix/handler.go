@@ -4,7 +4,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/atdiar/goroutine/execution"
+	"context"
+
 	"github.com/atdiar/xhttp"
 )
 
@@ -25,7 +26,7 @@ func NewHandler(prefix string) Handler {
 	}
 }
 
-func (h Handler) ServeHTTP(ctx execution.Context, w http.ResponseWriter, r *http.Request) {
+func (h Handler) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	if h.prefix == "" {
 		if h.next != nil {
 			h.next.ServeHTTP(ctx, w, r)

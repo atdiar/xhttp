@@ -4,7 +4,8 @@ package redirect
 import (
 	"net/http"
 
-	"github.com/atdiar/goroutine/execution"
+	"context"
+
 	"github.com/atdiar/xhttp"
 )
 
@@ -24,7 +25,7 @@ func To(urlstr string, code int) Handler {
 	}
 }
 
-func (h Handler) ServeHTTP(ctx execution.Context, w http.ResponseWriter, r *http.Request) {
+func (h Handler) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, h.URLstr, h.Code)
 	if h.next != nil {
 	}

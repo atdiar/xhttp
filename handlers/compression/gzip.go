@@ -9,7 +9,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/atdiar/goroutine/execution"
+	"context"
+
 	"github.com/atdiar/xhttp"
 )
 
@@ -82,7 +83,7 @@ func (cw compressingWriter) Wrappee() http.ResponseWriter { return cw.ResponseWr
 
 // ServeHTTP handles a http.Request by gzipping the http response body and
 // setting the right http Headers.
-func (g Gzipper) ServeHTTP(ctx execution.Context, w http.ResponseWriter, req *http.Request) {
+func (g Gzipper) ServeHTTP(ctx context.Context, w http.ResponseWriter, req *http.Request) {
 	if mustSkip, exist := g.skip[strings.ToUpper(req.Method)]; exist && mustSkip {
 		if g.next != nil {
 			g.next.ServeHTTP(ctx, w, req)
@@ -108,7 +109,7 @@ func (g Gzipper) ServeHTTP(ctx execution.Context, w http.ResponseWriter, req *ht
 	}
 	err := wc.Close()
 	if err != nil {
-		ctx.Panic(err)
+		panic(err)
 	}
 }
 

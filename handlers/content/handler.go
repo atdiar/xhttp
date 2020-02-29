@@ -2,7 +2,7 @@
 // It is useful for media that are susceptible to a range request such as audio
 // or video files.
 //
-// Exanple: https://stackoverflow.com/questions/8293687/sample-http-range-request-session
+// Example: https://stackoverflow.com/questions/8293687/sample-http-range-request-session
 package content
 
 import (
@@ -10,11 +10,12 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/atdiar/goroutine/execution"
+	"context"
+
 	"github.com/atdiar/xhttp"
 )
 
-// Server is an adapter for xhtp of a net/http handler that serves content.
+// Server is an adapter for xhttp of a net/http handler that serves content.
 // For further information, please refer to https://golang.org/pkg/net/http/#ServeContent
 type Server struct {
 	name    string
@@ -33,7 +34,7 @@ func NewServer(name string, modtime time.Time, content io.ReadSeeker) Server {
 	}
 }
 
-func (s Server) ServeHTTP(ctx execution.Context, w http.ResponseWriter, r *http.Request) {
+func (s Server) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, s.name, s.modtime, s.content)
 	if s.next != nil {
 		s.next.ServeHTTP(ctx, w, r)

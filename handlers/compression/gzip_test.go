@@ -7,7 +7,8 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/atdiar/goroutine/execution"
+	"context"
+
 	"github.com/atdiar/xhttp"
 )
 
@@ -27,14 +28,14 @@ func ServeMux() xhttp.ServeMux {
 
 	mux.USE(compressor)
 
-	mux.GET("/", xhttp.HandlerFunc(func(ctx execution.Context, res http.ResponseWriter, req *http.Request) {
+	mux.GET("/", xhttp.HandlerFunc(func(ctx context.Context, res http.ResponseWriter, req *http.Request) {
 		res.Header().Set("Content-Length", strconv.Itoa(LenPayload*1024))
 		for i := 0; i < 1024; i++ {
 			res.Write([]byte(Payload))
 		}
 	}))
 
-	mux.POST("/", xhttp.HandlerFunc(func(ctx execution.Context, res http.ResponseWriter, req *http.Request) {
+	mux.POST("/", xhttp.HandlerFunc(func(ctx context.Context, res http.ResponseWriter, req *http.Request) {
 		res.Header().Set("Content-Length", strconv.Itoa(LenPayload*1024))
 
 		for i := 0; i < 1024; i++ {

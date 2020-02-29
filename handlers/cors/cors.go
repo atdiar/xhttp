@@ -9,7 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/atdiar/goroutine/execution"
+	"context"
+
 	"github.com/atdiar/xhttp"
 )
 
@@ -125,7 +126,7 @@ func (h Handler) EnablePreflight(mux *xhttp.ServeMux, endpoint string) Handler {
 	return h
 }
 
-func (p *PreflightHandler) ServeHTTP(ctx execution.Context, w http.ResponseWriter, r *http.Request) {
+func (p *PreflightHandler) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 
 	// Check Headers: Origin, Access-Control-Request-Method, Access-Control-Request-Headers
 	if !originIsPresent(r) {
@@ -235,7 +236,7 @@ func (h Handler) WithCredentials() Handler {
 	return h
 }
 
-func (h Handler) ServeHTTP(ctx execution.Context, w http.ResponseWriter, r *http.Request) {
+func (h Handler) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	w.Header().Add("Vary", "Origin")
 
 	if !originIsPresent(r) {

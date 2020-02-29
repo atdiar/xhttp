@@ -8,7 +8,8 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/atdiar/goroutine/execution"
+	"context"
+
 	"github.com/atdiar/xhttp"
 	"github.com/atdiar/xhttp/handlers/session"
 )
@@ -17,41 +18,37 @@ const (
 	methodGET     = "GET"
 	methodHEAD    = "HEAD"
 	methodOPTIONS = "OPTIONS"
-	invalidToken  = "Forbidden. anti-CSRF Token missing or invalid"
+	TokenInvalid  = "Forbidden. anti-CSRF Token/header missing or invalid"
+	HeaderMissing = "Anti CSRF header is missing"
 )
 
 var (
-	errInvalidSession = errors.New("Session pointer is nil. Session does not exist ?")
+	ErrInvalidSession = errors.New("Session does not exist ?")
 )
 
 // Handler is a special type of request handler that creates a token value used
 // to protect against Cross-Site Request Forgery vulnerabilities.
 type Handler struct {
-	Cookie  http.Cookie // anti-csrf cookie sent to client.
-	Header  string      // Name of the anti-csrf request header to check
+	Header  string // Name of the anti-csrf request header to check
 	Session session.Handler
-	strict  bool // if true, a request is only valid if the xsrf Header is present.
 	next    xhttp.Handler
 }
 
-// NewHandler builds a new anti-CSRF request handler.
-// Because this token should be saved as a session value and matched against in
-// order to  check the validity of a request, a fully parameterized session
-// Handler object should be passed as argument.
-// By default, the session cookie, holding the anti-CSRF value, is named
-// "ANTICSRF"
-func NewHandler(s session.Handler) Handler {
+// NewHandler builds a new anti-CSRF request handler, creating a full session
+// object.
+func NewHandler(name string, secret string, options ...func(Handler) Handler) Handler {
 	h := Handler{}
-	s = s.DisableCaching()
-	h.Session = s
-	h.Cookie = h.Session.Cookie
-	h.strict = true
+	h.Session = session.New(name, secret)
+	h.Session.CachingEnabled.Set(false)
 
 	h.Header = "X-CSRF-TOKEN"
-	h.Cookie.Name = "ANTICSRF"
-	h.Cookie.HttpOnly = false
-	h.Cookie.MaxAge = 0
 
+	h.Session.Cookie.Config.HttpOnly = false
+	if options != nil {
+		for _, opt := range options {
+			h = opt(h)
+		}
+	}
 	return h
 }
 
@@ -61,48 +58,36 @@ func (h Handler) Link(hn xhttp.Handler) xhttp.HandlerLinker {
 	return h
 }
 
-// LaxMode disables the hard requirement for an anti-CSRF specific Header
-// to be present in the client request.
-// By default, it is true, meaning that if no header is found, the request
-// handling cannot proceed further.
-func (h Handler) LaxMode() Handler {
-	h.strict = true
-	return h
-}
-
-func (h Handler) generateToken(ctx execution.Context, res http.ResponseWriter, req *http.Request) (err error) {
+func (h Handler) generateToken(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
 	tok, err := generateToken(32)
 	if err != nil {
 		http.Error(res, "Generating anti-CSRF Token failed", 503)
-		return err
+		return ctx, err
 	}
 	// First we replace the session cookie by the anti-CSRF cookie
 	// That will ensure that on Session Save, the anti-CSRF is registered in the
 	// http response header.
-	h.Session.Cookie = h.Cookie
-	h.Session.Data.StoreValue(tok)
+	err = h.Session.Put(h.Session.Name, []byte(tok), 0)
 
-	if err = h.Session.Put(tok, ([]byte)(tok)); err != nil {
+	if err != nil {
 		http.Error(res, "Storing new CSRF Token in session failed", 503)
-		return err
+		return ctx, err
 	}
-	h.Session.Save(ctx, res, req)
-	return err
+	ctx = h.Session.Save(ctx, res, req)
+	return ctx, err
 }
 
-// TokenFromCtx tries to retrieve the anti-CSRF token value from the context
-// datastore.
-func (h Handler) TokenFromCtx(ctx execution.Context) (string, error) {
-	h.Session.Cookie = h.Cookie
-	v, err := h.Session.DataFromCtx(ctx)
-	if err != nil {
-		return "", err
+// CtxToken returns the encoded session value of a csrf token.
+func (h Handler) CtxToken(ctx context.Context) (string, error) {
+	c, ok := ctx.Value(h.Session.ContextKey).(http.Cookie)
+	if !ok {
+		return "", errors.New("CSRF: could not retrieve anticsrf token. Absent")
 	}
-	return v.RetrieveValue(), nil
+	return c.Value, nil
 }
 
 // ServeHTTP handles the servicing of incoming http requests.
-func (h Handler) ServeHTTP(ctx execution.Context, res http.ResponseWriter, req *http.Request) {
+func (h Handler) ServeHTTP(ctx context.Context, res http.ResponseWriter, req *http.Request) {
 	// We want any potential caching system to remain aware of changes to the
 	// cookie header. As such, we have to add a Vary header.
 	res.Header().Add("Vary", "Cookie")
@@ -110,25 +95,15 @@ func (h Handler) ServeHTTP(ctx execution.Context, res http.ResponseWriter, req *
 	// First we have to load the session data.
 	// Indeed, we want to register the CSRF token as a session value.
 	// For this, we need to use the most recently generated session id.
-	err := h.Session.Load(ctx, res, req)
-	if err != nil {
-		// the order in which the session and anti-csrf request handlers have been
-		// called is probably incorrect.
-		panic("Session not found: Cannot register CSRF token as a session value.")
-	}
-	// We replace the session cookie by the anticsrf cookie.
-	// That will ensure that on Session Save, the anti-csrf is added to the
-	// http response header.
-	h.Session.Cookie = h.Cookie
+	ctx, err := h.Session.Load(ctx, res, req)
 
 	switch req.Method {
 	case methodGET, methodHEAD, methodOPTIONS:
 		// No CSRF check is performed for these methods.
 		// However, an anti-CSRF token is generated and sent with the response
 		// iff none has been generated yet.
-		err = h.Session.Load(ctx, res, req)
 		if err != nil {
-			err = h.generateToken(ctx, res, req)
+			ctx, err = h.generateToken(ctx, res, req)
 			if err != nil {
 				http.Error(res, "Internal Server Error", 500)
 				return
@@ -137,87 +112,46 @@ func (h Handler) ServeHTTP(ctx execution.Context, res http.ResponseWriter, req *
 		if h.next != nil {
 			h.next.ServeHTTP(ctx, res, req)
 		}
-		return
 
 	default:
-		Header, ok := req.Header[h.Header]
-		if !ok {
-			if h.strict {
-				err = h.generateToken(ctx, res, req)
-				if err != nil {
-					http.Error(res, "Internal Server Error", 500)
-					return
-				}
-				http.Error(res, invalidToken, 403)
-				return
-			}
-			err = h.Session.Load(ctx, res, req)
-			if err != nil {
-				err = h.generateToken(ctx, res, req)
-				if err != nil {
-					http.Error(res, "Internal Server Error", 500)
-					return
-				}
-				http.Error(res, invalidToken, 403)
-				return
-			}
-			// Validation
-			tokenReceived := h.Session.Data.RetrieveValue()
-			rawTokenInSession, err := h.Session.Get(tokenReceived)
-			if err != nil {
-				err = h.generateToken(ctx, res, req)
-				if err != nil {
-					http.Error(res, "Internal Server Error", 500)
-					return
-				}
-				http.Error(res, invalidToken, 403)
-				return
-			}
-			if tokenReceived != string(rawTokenInSession) {
-				err = h.generateToken(ctx, res, req)
-				if err != nil {
-					http.Error(res, "Internal Server Error", 500)
-					return
-				}
-				http.Error(res, invalidToken, 403)
-				return
-			}
-			if h.next != nil {
-				h.next.ServeHTTP(ctx, res, req)
-			}
-			return
-		}
-		// Header exists. The anti-csrf cookie must be present too.
-		err = h.Session.Load(ctx, res, req)
 		if err != nil {
-			err = h.generateToken(ctx, res, req)
+			ctx, err = h.generateToken(ctx, res, req)
 			if err != nil {
 				http.Error(res, "Internal Server Error", 500)
 				return
 			}
-			http.Error(res, invalidToken, 403)
+			http.Error(res, TokenInvalid, 403)
 			return
 		}
 
-		tokenReceived := Header[0]
-		tokenFromCookie := h.Session.Data.RetrieveValue()
-		rawTokenInSession, err := h.Session.Get(tokenReceived)
-		if err != nil {
-			err = h.generateToken(ctx, res, req)
-			if err != nil {
-				http.Error(res, "Internal Server Error", 500)
-				return
-			}
-			http.Error(res, invalidToken, 403)
+		Header, ok := req.Header[h.Header]
+		if !ok {
+			http.Error(res, HeaderMissing, http.StatusBadRequest)
 			return
 		}
-		if t := string(rawTokenInSession); tokenReceived != t || tokenFromCookie != t {
-			err = h.generateToken(ctx, res, req)
+
+		// Validation
+
+		// Header exists. The anti-csrf cookie must be present too.
+		headerToken := Header[0]
+		cookie, ok := ctx.Value(h.Session.ContextKey).(http.Cookie)
+		if !ok {
+			ctx, err = h.generateToken(ctx, res, req)
 			if err != nil {
 				http.Error(res, "Internal Server Error", 500)
 				return
 			}
-			http.Error(res, invalidToken, 403)
+			http.Error(res, "anti csrf session not valid", http.StatusBadRequest)
+			return
+		}
+		cookieToken := cookie.Value
+		if headerToken != cookieToken {
+			ctx, err = h.generateToken(ctx, res, req)
+			if err != nil {
+				http.Error(res, "Internal Server Error", 500)
+				return
+			}
+			http.Error(res, "anti csrf header not valid", http.StatusBadRequest)
 			return
 		}
 		if h.next != nil {
