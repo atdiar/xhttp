@@ -15,7 +15,7 @@ import (
 // The user information can be stored in a SQL database after being sourced from
 // oAuth providers or a traditional email sign up form.
 type Handler struct {
-	Session *session.Handler
+	Session session.Interface
 	Handler xhttp.Handler
 	next    xhttp.Handler
 
@@ -33,7 +33,7 @@ type DBSQLCreateUserFunc = func(userinfo interface{}) (sql.Result, error)
 // New returns a request handler used for user signup. It is generic
 // and as suc, ought to be configured according to each service provider via the
 // second argument.
-func New(s *session.Handler, Configure func(s Handler) Handler) Handler {
+func New(s session.Interface, Configure func(s Handler) Handler) Handler {
 	n := Handler{
 		Session: s,
 		Handler: nil,
@@ -54,12 +54,12 @@ func (s Handler) Configure(cs ...func(s Handler) Handler) Handler {
 			s = c(s)
 		}
 	}
-	return s
+	return sfr
 }
 
 func (s Handler) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	if s.Handler == nil {
-		panic("Signup handler ill-registered")
+		panic("Signup handler was not registered correctly.")
 	}
 	s.Handler.ServeHTTP(ctx, w, r)
 	if s.next != nil {
