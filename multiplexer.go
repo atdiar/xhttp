@@ -3,11 +3,9 @@
 package xhttp
 
 import (
+	"context"
 	"net/http"
 	"strings"
-	"time"
-
-	"github.com/atdiar/goroutine/execution"
 )
 
 // ServeMux holds the multiplexing logic of incoming http requests.
@@ -16,41 +14,17 @@ import (
 type ServeMux struct {
 	catchAll        HandlerLinker
 	routeHandlerMap map[string]verbsHandlerList
-	timeout         time.Duration
 	*http.ServeMux
-}
-
-type option func(*ServeMux)
-
-// ChangeMux returns a configuration option for the ServeMux constructor
-// which enables the choice of an alternate Muxer.
-func ChangeMux(mux *http.ServeMux) func(*ServeMux) {
-	return func(s *ServeMux) {
-		s.ServeMux = mux
-	}
-}
-
-// SetTimeout returns a functional configuration option which provides a
-// time boundary for the handling of requests under the form of a timeout.
-func SetTimeout(t time.Duration) func(*ServeMux) {
-	return func(sm *ServeMux) {
-		sm.timeout = t
-	}
 }
 
 // NewServeMux creates a new multiplexer wrapper which holds the request
 // servicing logic.
 // The mux wrapped by default is http.DefaultServeMux.
 // That can be changed by using the ChangeMux configuration option.
-func NewServeMux(options ...option) ServeMux {
+func NewServeMux() ServeMux {
 	sm := ServeMux{}
 	sm.ServeMux = http.DefaultServeMux
 	sm.routeHandlerMap = make(map[string]verbsHandlerList)
-
-	// The below applies the options if any were passed.
-	for _, opt := range options {
-		opt(&sm)
-	}
 	return sm
 }
 
@@ -66,122 +40,23 @@ func (sm ServeMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		method := strings.ToUpper(req.Method)
 		switch method {
 		case "GET":
-			// Let's create the datastore and then the execution context
-
-			aS := execution.NewDefaultStorer()
-			ctx := execution.NewContext(aS)
-			if sm.timeout != 0 {
-				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
-			}
-			// Let's handle the request
-			vh.get.ServeHTTP(ctx, w, req)
-			// Let's cleanup
-			ctx.Cancel()
-
+			vh.get.ServeHTTP(req.Context(), w, req)
 		case "POST":
-			// Let's create the datastore and then the execution context
-
-			aS := execution.NewDefaultStorer()
-			ctx := execution.NewContext(aS)
-			if sm.timeout != 0 {
-				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
-			}
-			// Let's handle the request
-			vh.post.ServeHTTP(ctx, w, req)
-			// Let's cleanup
-			ctx.Cancel()
-
+			vh.post.ServeHTTP(req.Context(), w, req)
 		case "PUT":
-			// Let's create the datastore and then the execution context
-
-			aS := execution.NewDefaultStorer()
-			ctx := execution.NewContext(aS)
-			if sm.timeout != 0 {
-				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
-			}
-			// Let's handle the request
-			vh.put.ServeHTTP(ctx, w, req)
-			// Let's cleanup
-			ctx.Cancel()
-
+			vh.put.ServeHTTP(req.Context(), w, req)
 		case "PATCH":
-			// Let's create the datastore and then the execution context
-
-			aS := execution.NewDefaultStorer()
-			ctx := execution.NewContext(aS)
-			if sm.timeout != 0 {
-				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
-			}
-			// Let's handle the request
-			vh.patch.ServeHTTP(ctx, w, req)
-			// Let's cleanup
-			ctx.Cancel()
-
+			vh.patch.ServeHTTP(req.Context(), w, req)
 		case "DELETE":
-			// Let's create the datastore and then the execution context
-
-			aS := execution.NewDefaultStorer()
-			ctx := execution.NewContext(aS)
-			if sm.timeout != 0 {
-				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
-			}
-			// Let's handle the request
-			vh.delete.ServeHTTP(ctx, w, req)
-			// Let's cleanup
-			ctx.Cancel()
-
+			vh.delete.ServeHTTP(req.Context(), w, req)
 		case "HEAD":
-			// Let's create the datastore and then the execution context
-
-			aS := execution.NewDefaultStorer()
-			ctx := execution.NewContext(aS)
-			if sm.timeout != 0 {
-				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
-			}
-			// Let's handle the request
-			vh.head.ServeHTTP(ctx, noBodyWriter{w}, req)
-			// Let's cleanup
-			ctx.Cancel()
-
+			vh.head.ServeHTTP(req.Context(), noBodyWriter{w}, req)
 		case "OPTIONS":
-			// Let's create the datastore and then the execution context
-
-			aS := execution.NewDefaultStorer()
-			ctx := execution.NewContext(aS)
-			if sm.timeout != 0 {
-				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
-			}
-			// Let's handle the request
-			vh.options.ServeHTTP(ctx, w, req)
-			// Let's cleanup
-			ctx.Cancel()
-
+			vh.options.ServeHTTP(req.Context(), w, req)
 		case "CONNECT":
-			// Let's create the datastore and then the execution context
-
-			aS := execution.NewDefaultStorer()
-			ctx := execution.NewContext(aS)
-			if sm.timeout != 0 {
-				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
-			}
-			// Let's handle the request
-			vh.connect.ServeHTTP(ctx, w, req)
-			// Let's cleanup
-			ctx.Cancel()
-
+			vh.connect.ServeHTTP(req.Context(), w, req)
 		case "TRACE":
-			// Let's create the datastore and then the execution context
-
-			aS := execution.NewDefaultStorer()
-			ctx := execution.NewContext(aS)
-			if sm.timeout != 0 {
-				ctx = ctx.CancelAfter(execution.Timeout(sm.timeout))
-			}
-			// Let's handle the request
-			vh.trace.ServeHTTP(ctx, w, req)
-			// Let's cleanup
-			ctx.Cancel()
-
+			vh.trace.ServeHTTP(req.Context(), w, req)
 		default:
 			http.Error(w, http.StatusText(405), 405)
 		}
@@ -429,7 +304,7 @@ func Chain(handlers ...HandlerLinker) HandlerLinker {
 
 type handlerchain []HandlerLinker
 
-func (h handlerchain) ServeHTTP(ctx execution.Context, res http.ResponseWriter, req *http.Request) {
+func (h handlerchain) ServeHTTP(ctx context.Context, res http.ResponseWriter, req *http.Request) {
 	h[0].ServeHTTP(ctx, res, req)
 }
 
@@ -484,6 +359,13 @@ func patternMatch(path string, pattern string, vars map[string]string) bool {
 	return true
 }
 
+// PathMatch allows for the retrieval of URL parameters by name when an URL
+// matches a given pattern.
+// For instance https://example.com/track/2589556/comments/1879545 will match
+// the following pattern https://example.com/track/:tracknumber/comments/:commentnumber
+// In the vars map, we will have the following key/value pairs entered:
+// ("tracknumber","2589556") and ("commentnumber","1879545")
+// NB Everything remains stored as strings.
 func PathMatch(req *http.Request, pattern string, vars map[string]string) bool {
 	return patternMatch(req.URL.EscapedPath(), pattern, vars)
 }

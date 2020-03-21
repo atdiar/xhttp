@@ -6,7 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 
-	"github.com/atdiar/goroutine/execution"
+	"context"
+
 	"github.com/atdiar/xhttp"
 )
 
@@ -21,22 +22,22 @@ func Example() {
 	m := xhttp.Chain(middlewareExample{A, nil}, middlewareExample{B, nil}, middlewareExample{C, nil})
 	s.USE(m)
 
-	s.GET("/", xhttp.HandlerFunc(func(ctx execution.Context, res http.ResponseWriter, req *http.Request) {
-		a, err := ctx.Get(A)
-		if err != nil {
-			fmt.Fprint(res, err) // shall make the test fail
+	s.GET("/", xhttp.HandlerFunc(func(ctx context.Context, res http.ResponseWriter, req *http.Request) {
+		a := ctx.Value(A)
+		if a == nil {
+			fmt.Fprint(res, "Couldn't find a value in the context object for A") // shall make the test fail
 		}
 		fmt.Fprint(res, a)
 
-		b, err := ctx.Get(B)
-		if err != nil {
-			fmt.Fprint(res, err) // shall make the test fail
+		b := ctx.Value(B)
+		if b == nil {
+			fmt.Fprint(res, "Couldn't find a value in the context object for B") // shall make the test fail
 		}
 		fmt.Fprint(res, b)
 
-		c, err := ctx.Get(C)
-		if err != nil {
-			fmt.Fprint(res, err) // shall make the test fail
+		c := ctx.Value(C)
+		if c == nil {
+			fmt.Fprint(res, "Couldn't find a value in the context object for C") // shall make the test fail
 		}
 		fmt.Fprint(res, c)
 	}))
@@ -67,11 +68,11 @@ type middlewareExample struct {
 	next xhttp.Handler
 }
 
-func (m middlewareExample) ServeHTTP(ctx execution.Context, w http.ResponseWriter, r *http.Request) {
+func (m middlewareExample) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, "OK ")
-	ctx.Put(m.string, m.string)
+	c := context.WithValue(ctx, m.string, m.string)
 	if m.next != nil {
-		m.next.ServeHTTP(ctx, w, r)
+		m.next.ServeHTTP(c, w, r)
 	}
 }
 

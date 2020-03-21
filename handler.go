@@ -4,16 +4,15 @@ package xhttp
 // existence of an execution context for each request handling goroutine.
 
 import (
+	"context"
 	"net/http"
-
-	"github.com/atdiar/goroutine/execution"
 )
 
 // Handler is the interface implemented by a request servicing object.
 // If Handler is not also a HandlerLinker, it means that it can not call for
 // further processing.
 type Handler interface {
-	ServeHTTP(ctx execution.Context, w http.ResponseWriter, r *http.Request)
+	ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request)
 }
 
 // HandlerLinker is the interface of a request Handler to which we can attach
@@ -21,14 +20,14 @@ type Handler interface {
 // be called from the ServeHTTP method of the first handler, if needed.
 // The Link method returns the fully linked HandlerLinker.
 type HandlerLinker interface {
-	ServeHTTP(ctx execution.Context, w http.ResponseWriter, r *http.Request)
+	ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request)
 	Link(Handler) HandlerLinker
 }
 
 // HandlerFunc defines a type of functions implementing the Handler interface.
-type HandlerFunc func(execution.Context, http.ResponseWriter, *http.Request)
+type HandlerFunc func(context.Context, http.ResponseWriter, *http.Request)
 
-func (f HandlerFunc) ServeHTTP(ctx execution.Context, w http.ResponseWriter, r *http.Request) {
+func (f HandlerFunc) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	f(ctx, w, r)
 }
 
