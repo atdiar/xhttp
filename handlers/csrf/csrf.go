@@ -14,6 +14,8 @@ import (
 	"github.com/atdiar/xhttp/handlers/session"
 )
 
+// TODO use subtle compare... it mitigates timing attacks apparently
+
 const (
 	methodGET     = "GET"
 	methodHEAD    = "HEAD"
@@ -73,8 +75,7 @@ func (h Handler) generateToken(ctx context.Context, res http.ResponseWriter, req
 		http.Error(res, "Storing new CSRF Token in session failed", 503)
 		return ctx, err
 	}
-	ctx = h.Session.Save(ctx, res, req)
-	return ctx, err
+	return h.Session.Save(ctx, res, req)
 }
 
 // CtxToken returns the encoded session value of a csrf token.

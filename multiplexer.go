@@ -5,6 +5,7 @@ package xhttp
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -23,7 +24,7 @@ type ServeMux struct {
 // That can be changed by using the ChangeMux configuration option.
 func NewServeMux() ServeMux {
 	sm := ServeMux{}
-	sm.ServeMux = http.DefaultServeMux
+	sm.ServeMux = http.NewServeMux()
 	sm.routeHandlerMap = make(map[string]verbsHandlerList)
 	return sm
 }
@@ -339,8 +340,9 @@ func (nbw noBodyWriter) Write([]byte) (int, error) { return 200, nil }
 
 func (nbw noBodyWriter) Wrappee() http.ResponseWriter { return nbw.ResponseWriter }
 
-func patternMatch(path string, pattern string, vars map[string]string) bool {
-	pathsplit := strings.SplitN(path, "/", -1)
+func patternMatch(url *url.URL, pattern string, vars map[string]string) bool {
+	uri := url.RequestURI()
+	pathsplit := strings.SplitN(uri, "/", -1)
 	patternsplit := strings.SplitN(pattern, "/", -1)
 	if len(pathsplit) != len(patternsplit) {
 		return false
@@ -366,6 +368,7 @@ func patternMatch(path string, pattern string, vars map[string]string) bool {
 // In the vars map, we will have the following key/value pairs entered:
 // ("tracknumber","2589556") and ("commentnumber","1879545")
 // NB Everything remains stored as strings.
+// This function should be used on a path registered in the muxer as /track/
 func PathMatch(req *http.Request, pattern string, vars map[string]string) bool {
-	return patternMatch(req.URL.EscapedPath(), pattern, vars)
+	return patternMatch(req.URL, pattern, vars)
 }

@@ -96,7 +96,7 @@ func NewCookie(name string, secret string, maxage int, id string, options ...fun
 		Data:       make(map[string]CookieValue),
 		UpdateFlag: &flag.Flag{},
 		Secret:     secret,
-		Delimiter:  ":",
+		Delimiter:  "::",
 	}
 	s.Config.Name = name
 	s.Config.MaxAge = maxage
@@ -152,6 +152,7 @@ func (c Cookie) Get(key string) (string, bool) {
 }
 
 // Set inserts a value in the cookie session for a given key.
+// Do not use "id" as a key. It has been reserved by the library.
 func (c Cookie) Set(key string, val string, maxage time.Duration) {
 	if key == "id" {
 		panic("ERR: cannot used 'id' as key.")

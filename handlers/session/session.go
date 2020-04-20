@@ -2,34 +2,18 @@
 // of client/server sessions.
 package session
 
-/*
-Package description
-===================
-
-The session package contains two files:
-
-* session.go
-* metadata.go
-
-session.go defines a xhttp.Handler type which creates a session per
-request.
-
-metadata.go defines the format of session data that is marshalled/unmarshalled
-to/from the session cookie.
-
-*/
-
 import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
-	"errors"
 	"log"
 	"net/http"
 	"time"
 
 	"context"
 
+	"github.com/atdiar/errcode"
+	"github.com/atdiar/errors"
 	"github.com/atdiar/flag"
 	"github.com/atdiar/xhttp"
 	"github.com/satori/go.uuid"
@@ -37,20 +21,20 @@ import (
 
 var (
 	// ErrNoID is returned when no session ID was found or the value was invalid.
-	ErrNoID = errors.New("No id or Invalid id.")
+	ErrNoID = errors.New("No id or Invalid id.").Code(errcode.NoID)
 	// ErrBadSession is returned when the session is in an invalid state.
-	ErrBadSession = errors.New("Session may have been compromised or does not exist.")
+	ErrBadSession = errors.New("Session may have been compromised or does not exist.").Code(errcode.BadSession)
 	// ErrBadCookie is returned when the session cookie is invalid.
-	ErrBadCookie = errors.New("Bad session cookie. Retry.")
+	ErrBadCookie = errors.New("Bad session cookie. Retry.").Code(errcode.BadCookie)
 	// ErrNoCookie is returned when the session cookie is absent
-	ErrNoCookie = errors.New("Session Cookie absent.")
+	ErrNoCookie = errors.New("Session Cookie absent.").Code(errcode.BadCookie)
 	// ErrBadStorage is returned when session storage is faulty.
-	ErrBadStorage = errors.New("Invalid storage.")
+	ErrBadStorage = errors.New("Invalid storage.").Code(errcode.BadStorage)
 	// ErrExpired is returned when the session has expired.
-	ErrExpired = errors.New("Session has expired.")
+	ErrExpired = errors.New("Session has expired.").Code(errcode.Expired)
 	// ErrKeyNotFound is returned when getting the value for a given key from the cookie
 	// store failed.
-	ErrKeyNotFound = errors.New("Key missing or expired")
+	ErrKeyNotFound = errors.New("Key missing or expired").Code(errcode.KeyNotFound)
 )
 
 type contextKey struct{}
@@ -83,17 +67,15 @@ type Store interface {
 	TimeToExpiry(id string, hkey string) (time.Duration, error)
 }
 
-// Interface edfines a common interface for objects that are used for session
+// Interface defines a common interface for objects that are used for session
 // management.
 type Interface interface {
 	Get(string) ([]byte, error)
 	Put(key string, value []byte, maxage time.Duration) error
 	Delete(key string) error
 	Load(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error)
-	Save(ctx context.Context, res http.ResponseWriter, req *http.Request) context.Context
-	Generate(ctx context.Context, res http.ResponseWriter, req *http.Request) context.Context
-	ServeHTTP(ctx context.Context, res http.ResponseWriter, req *http.Request)
-	Link(hn xhttp.Handler) xhttp.HandlerLinker
+	Save(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error)
+	Generate(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error)
 }
 
 // Handler defines a type for request handling objects in charge of
@@ -370,25 +352,11 @@ func (h Handler) Delete(key string) error {
 	return nil
 }
 
-/*// DataFromCtx tries to recover the session data that would have been
-// saved within a context.Context object.
-func (h Handler) DataFromCtx(ctx context.Context) (d data, err error) {
-	v := ctx.Value(h.Cookie)
-	if v == nil {
-		return d, ErrBadSession
-	}
-	res, ok := v.(data)
-	if !ok {
-		return d, errors.New("Invalid session data format.")
-	}
-	return res, nil
-}*/
-
 // Load will try to recover the session handler state if it was previously
 // handled. Otherwise, it will try loading the metadata directly from the request
 // object if it exists. If none works, an error is returned.
 // Not safe for concurrent use by multiple goroutines.
-func (h *Handler) Load(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
+func (h Handler) Load(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
 	dt := ctx.Value(h.ContextKey)
 
 	if dt == nil {
@@ -406,12 +374,12 @@ func (h *Handler) Load(ctx context.Context, res http.ResponseWriter, req *http.R
 			}
 			return ctx, ErrBadCookie
 		}
-		return h.Save(ctx, res, req), nil
+		return h.Save(ctx, res, req)
 	}
 	c := dt.(http.Cookie)
 	h.Cookie.Config = &c
 	if h.Cookie.UpdateFlag.IsTrue() {
-		return h.Save(ctx, res, req), nil
+		return h.Save(ctx, res, req)
 	}
 	return ctx, nil
 }
@@ -420,30 +388,23 @@ func (h *Handler) Load(ctx context.Context, res http.ResponseWriter, req *http.R
 // It needs to be called to apply session data changes.
 // These changes entail a modification in the value of the session cookie.
 // Not safe for concurrent use by multiple goroutines.
-func (h *Handler) Save(ctx context.Context, res http.ResponseWriter, req *http.Request) context.Context {
+func (h Handler) Save(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
 	hc, err := h.Cookie.Encode()
 	if err != nil {
-		http.Error(res, http.ErrAbortHandler.Error(), http.StatusInternalServerError)
-		if h.Log != nil {
-			h.Log.Print(err)
-		}
-		return h.Generate(ctx, res, req)
+		return ctx, err
 	}
 	res.Header().Add("Set-Cookie", hc.String())
 	h.Cookie.UpdateFlag.Set(false)
-	return context.WithValue(ctx, h.ContextKey, hc)
+	return context.WithValue(ctx, h.ContextKey, hc), nil
 }
 
 // Generate creates a completely new session.
-func (h *Handler) Generate(ctx context.Context, res http.ResponseWriter, req *http.Request) context.Context {
+func (h Handler) Generate(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
 
 	// 1. Create UUID
 	id, err := h.uuidgen()
 	if err != nil {
-		http.Error(res, http.ErrAbortHandler.Error(), http.StatusInternalServerError)
-		if h.Log != nil {
-			h.Log.Print(err)
-		}
+		return ctx, err
 	}
 
 	// 3. Update session cookie
@@ -465,7 +426,11 @@ func (h Handler) ServeHTTP(ctx context.Context, res http.ResponseWriter, req *ht
 	c, err := h.Load(ctx, res, req)
 
 	if err != nil {
-		c = h.Generate(c, res, req)
+		c, err = h.Generate(c, res, req)
+		if err != nil {
+			http.Error(res, "Unable to generate session", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	if h.next != nil {
@@ -565,9 +530,9 @@ func (o OrderedGroup) Load(ctx context.Context, res http.ResponseWriter, req *ht
 // It needs to be called to apply session data changes.
 // These changes entail a modification in the value of the  relevant session cookie.
 // Not safe for concurrent use by multiple goroutines.
-func (o OrderedGroup) Save(ctx context.Context, res http.ResponseWriter, req *http.Request) context.Context {
+func (o OrderedGroup) Save(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
 	if o.Handlers == nil {
-		return ctx
+		return ctx, nil
 	}
 	for i := len(o.Handlers) - 1; i >= 0; i++ {
 		if v := ctx.Value(o.Handlers[i].ContextKey); v != nil {
@@ -575,13 +540,13 @@ func (o OrderedGroup) Save(ctx context.Context, res http.ResponseWriter, req *ht
 		}
 		continue
 	}
-	return ctx
+	return ctx, nil
 }
 
 // Generate creates a completely new session corresponding to a given session ContextKey.
-func (o OrderedGroup) Generate(ctx context.Context, res http.ResponseWriter, req *http.Request) context.Context {
+func (o OrderedGroup) Generate(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
 	if o.Handlers == nil {
-		return ctx
+		return ctx, nil
 	}
 	for i := len(o.Handlers) - 1; i >= 0; i++ {
 		if v := ctx.Value(o.Handlers[i].ContextKey); v != nil {
@@ -589,7 +554,7 @@ func (o OrderedGroup) Generate(ctx context.Context, res http.ResponseWriter, req
 		}
 		continue
 	}
-	return ctx
+	return ctx, nil
 }
 
 // ServeHTTP effectively makes the session a xhttp request handler.
@@ -601,7 +566,11 @@ func (o OrderedGroup) ServeHTTP(ctx context.Context, res http.ResponseWriter, re
 	c, err := o.Load(ctx, res, req)
 
 	if err != nil {
-		c = o.Generate(c, res, req)
+		c, err = o.Generate(c, res, req)
+		if err != nil {
+			http.Error(res, "Unable to generate session", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	if o.next != nil {
@@ -696,31 +665,31 @@ func (o Group) Load(ctx context.Context, res http.ResponseWriter, req *http.Requ
 // It needs to be called to apply session data changes.
 // These changes entail a modification in the value of the  relevant session cookie.
 // Not safe for concurrent use by multiple goroutines.
-func (o Group) Save(ctx context.Context, res http.ResponseWriter, req *http.Request) context.Context {
+func (o Group) Save(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
 	if o.Handlers == nil {
-		return ctx
+		return ctx, nil
 	}
 	for k, v := range o.Handlers {
 		if ctx.Value(k) != nil {
 			return v.Save(ctx, res, req)
 		}
-		return ctx
+		return ctx, nil
 	}
-	return ctx
+	return ctx, nil
 }
 
 // Generate creates a completely new session corresponding to a given session ContextKey.
-func (o Group) Generate(ctx context.Context, res http.ResponseWriter, req *http.Request) context.Context {
+func (o Group) Generate(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
 	if o.Handlers == nil {
-		return ctx
+		return ctx, nil
 	}
 	for k, v := range o.Handlers {
 		if ctx.Value(k) != nil {
 			return v.Generate(ctx, res, req)
 		}
-		return ctx
+		return ctx, nil
 	}
-	return ctx
+	return ctx, nil
 }
 
 // ServeHTTP effectively makes the session a xhttp request handler.
@@ -732,7 +701,10 @@ func (g Group) ServeHTTP(ctx context.Context, res http.ResponseWriter, req *http
 	c, err := g.Load(ctx, res, req)
 
 	if err != nil {
-		c = g.Generate(c, res, req)
+		c, err = g.Generate(c, res, req)
+		if err != nil {
+			http.Error(res, "", http.StatusInternalServerError)
+		}
 	}
 
 	if g.next != nil {

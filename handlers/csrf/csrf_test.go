@@ -197,8 +197,8 @@ func TestAntiCSRF(t *testing.T) {
 	if body == "" {
 		t.Fatal("Unexpected empty body.")
 	}
-	if body != HeaderMissing {
-		t.Fatalf("Expected failure due to token invalidation but got %v", body)
+	if body != TokenInvalid {
+		t.Fatalf("Expected:\n %v \n but got \n %v", TokenInvalid, body)
 	}
 }
 

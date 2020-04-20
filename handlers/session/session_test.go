@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/atdiar/testcache"
+	"github.com/atdiar/localmemstore"
 	"github.com/atdiar/xhttp"
 )
 
@@ -22,7 +22,7 @@ func Multiplexer(t *testing.T) xhttp.ServeMux {
 
 	r := xhttp.NewServeMux()
 
-	s := New("GSID", "secret", SetStore(testcache.TestStore())) // ("thiusedfrtgju8975bj", testcache.TestStore())
+	s := New("GSID", "secret", SetStore(localmemstore.New())) // ("thiusedfrtgju8975bj", testcache.TestStore())
 	s.Cookie.Config.MaxAge = 86400
 	r.USE(s)
 
@@ -137,6 +137,11 @@ func TestSession(t *testing.T) {
 	if body := w.Body.String(); body == str {
 		t.Errorf("Expected different values but got the same id: %v vs %v", body, str)
 	}
+}
+
+func TestSessionInterface(t *testing.T) {
+	s := New("GSID", "secret")
+	_ = Interface(s)
 }
 
 // #############################################################################
