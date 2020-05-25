@@ -4,8 +4,13 @@ package dynamux
 import (
 	"context"
 	"encoding/json"
+	"io/ioutil"
+	"log"
 	"net/http"
+	"net/http/httptest"
+	"net/http/httputil"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,12 +25,14 @@ type contextKey struct{}
 // Link defines the structure of a url generated at runtime which can collect
 // application stats. It is not used to track people across the internet.
 // This is an indirection url which enables processing to be done before the
-// resource is fetched. Typical use would be url creation for uploaded resources.
+// static resource is fetched. Typical use would be url creation for uploaded resources.
 type Link struct {
 	UID string
 
 	Path       string
 	RedirectTo *url.URL
+	Proxy      *httputil.ReverseProxy `json:"-"`
+	Client     *http.Client           `json:"-"`
 	Active     bool
 	// OwnerID string // whom the link was created on behalf of
 	// Referer *url.URL
@@ -43,14 +50,17 @@ type Link struct {
 // maxage <0 means the link is expired
 // maxage = 0 means the link doesn not expire
 func NewLink(id string, path string, dest *url.URL, maxage time.Duration) Link {
-	return Link{id, path, dest, true, time.Now().UTC(), maxage, new(contextKey)}
+	if dest != nil {
+		return Link{id, path, dest, httputil.NewSingleHostReverseProxy(dest), &http.Client{}, true, time.Now().UTC(), maxage, new(contextKey)}
+	}
+	return Link{id, path, dest, nil, nil, true, time.Now().UTC(), maxage, new(contextKey)}
 }
 
 /* The way it should work:
 1. Link is generated (an ID for the link is created and the link itself is  probably
 a hash based version (salt+pepper)
 2.The link is inserted in the Multiplexer object
-3. On request, the Multiplexer calls its request handler ( fo instance to record
+3. On request, the Multiplexer calls its request handler ( for instance to record
 statistics such as number of clicks) and then redirects via the
 destination url.
 
@@ -189,15 +199,38 @@ func (m *Multiplexer) ExpireLink(path string) error {
 	return nil
 }
 
+func pathExists(url *url.URL, m *Multiplexer) (bool, string) {
+	path := url.Path
+	_, ok := m.Links[path]
+	if ok {
+		return ok, path
+	}
+
+	var longestpath string
+	for route := range m.Links {
+		if strings.HasSuffix(path, "/") {
+			if strings.HasPrefix(route, path) {
+				if len(route) > len(longestpath) {
+					longestpath = route
+					ok = true
+				}
+			}
+		}
+	}
+	return ok, longestpath
+}
+
 func (m *Multiplexer) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
-	path := r.URL.Path
+
 	err := m.download()
 	if err != nil {
 		http.Error(w, "Error: Could not find the links \n"+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	v, ok := m.Links[path]
+	ok, dao := pathExists(r.URL, m)
+	v, ok := m.Links[dao]
 	if !ok {
+		log.Print(dao, v)
 		http.Error(w, "Error: Link broken or missing", http.StatusInternalServerError)
 		return
 	}
@@ -224,6 +257,25 @@ func (m *Multiplexer) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *h
 		m.next.ServeHTTP(ctx, w, r)
 	}
 	return
+}
+
+// Forwarder returns a http request handler which invokes a proxy request in order
+// fetch the destination resource.
+func Forwarder(l Link) xhttp.Handler {
+	forwarder := httptest.NewServer(l.Proxy)
+	return xhttp.HandlerFunc(func(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+		if l.RedirectTo != nil {
+			res, err := l.Client.Get(forwarder.URL)
+			if err != nil {
+				http.Error(w, "Could not fetch resource", http.StatusInternalServerError)
+				b, err := ioutil.ReadAll(res.Body)
+				if err != nil {
+					http.Error(w, "Could not read fetched response body", http.StatusInternalServerError)
+				}
+				w.Write(b)
+			}
+		}
+	})
 }
 
 /*

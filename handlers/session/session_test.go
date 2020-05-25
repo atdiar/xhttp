@@ -16,13 +16,14 @@ import (
 const (
 	fakeSessionID  = "987653536787838"
 	fakeSessionID2 = "sessionid123456"
+	GSID           = "GSID"
 )
 
 func Multiplexer(t *testing.T) xhttp.ServeMux {
 
 	r := xhttp.NewServeMux()
 
-	s := New("GSID", "secret", SetStore(localmemstore.New())) // ("thiusedfrtgju8975bj", testcache.TestStore())
+	s := New(GSID, "secret", SetStore(localmemstore.New())) // ("thiusedfrtgju8975bj", testcache.TestStore())
 	s.Cookie.Config.MaxAge = 86400
 	r.USE(s)
 
@@ -55,6 +56,7 @@ func Multiplexer(t *testing.T) xhttp.ServeMux {
 
 func TestSession(t *testing.T) {
 	r := Multiplexer(t)
+	t.Log(r)
 
 	// Initial request
 	req1, err := http.NewRequest("GET", "http://example.com/foo", nil)
@@ -69,13 +71,24 @@ func TestSession(t *testing.T) {
 	// There was no session cookie sent with the request since it is the
 	// initial one. However we expect a response that includes one, since
 	// a session should have been generated.
-	s := RetrieveCookie(w.Header(), "GSID")
+	//s := RetrieveCookie(w.Header(), "GSID")
+	var s *http.Cookie
+	wcookie := w.Result().Cookies()
+	if wcookie == nil {
+		t.Fatal("No cookie has been set, including session coookie.")
+	}
+	for _, c := range wcookie {
+		if c.Name == GSID {
+			s = c
+			break
+		}
+	}
 
 	if s == nil {
-		t.Error("The session cookie does not seem to have been set.")
+		t.Fatalf("The session cookie does not seem to have been set. Got %v", s)
 	}
 	if s.Name != "GSID" || s.Path != "/" || s.HttpOnly != true || s.Secure != true {
-		t.Error("The session cookie does not seem to have been set correctly.")
+		t.Errorf("The session cookie does not seem to have been set correctly. Got %v", s)
 	}
 	if s.MaxAge != 86400 {
 		t.Errorf("Session Cookie was uncorrectly set. Got %v and wanted %v", s.MaxAge, 86400)
@@ -94,7 +107,17 @@ func TestSession(t *testing.T) {
 	str := w.Body.String()
 
 	// The session cookie should not change.
-	s = RetrieveCookie(w.Header(), "GSID")
+	wcookie = w.Result().Cookies()
+	if wcookie == nil {
+		t.Fatal("No cookie has been set, including session coookie.")
+	}
+	for _, c := range wcookie {
+		if c.Name == GSID {
+			s = c
+			break
+		}
+	}
+
 	if s == nil {
 		t.Error("The session cookie does not seem to have been set.")
 	}
@@ -121,7 +144,17 @@ func TestSession(t *testing.T) {
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, req3)
 
-	ns := RetrieveCookie(w.Header(), "GSID")
+	var ns *http.Cookie
+	wcookie = w.Result().Cookies()
+	if wcookie == nil {
+		t.Fatal("No cookie has been set, including session coookie.")
+	}
+	for _, c := range wcookie {
+		if c.Name == GSID {
+			ns = c
+			break
+		}
+	}
 	if ns == nil {
 		t.Error("The session cookie does not seem to have been set.")
 	}
@@ -140,7 +173,7 @@ func TestSession(t *testing.T) {
 }
 
 func TestSessionInterface(t *testing.T) {
-	s := New("GSID", "secret")
+	s := New(GSID, "secret")
 	_ = Interface(s)
 }
 

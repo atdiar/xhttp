@@ -12,9 +12,9 @@ import (
 )
 
 const (
-	A = "A "
-	B = "B "
-	C = "C "
+	A = "A rainbow "
+	B = "Be very "
+	C = "Colorful "
 )
 
 func Example() {
@@ -22,7 +22,7 @@ func Example() {
 	m := xhttp.Chain(middlewareExample{A, nil}, middlewareExample{B, nil}, middlewareExample{C, nil})
 	s.USE(m)
 
-	s.GET("/", xhttp.HandlerFunc(func(ctx context.Context, res http.ResponseWriter, req *http.Request) {
+	s.GET("/go/14", xhttp.HandlerFunc(func(ctx context.Context, res http.ResponseWriter, req *http.Request) {
 		a := ctx.Value(A)
 		if a == nil {
 			fmt.Fprint(res, "Couldn't find a value in the context object for A") // shall make the test fail
@@ -42,22 +42,28 @@ func Example() {
 		fmt.Fprint(res, c)
 	}))
 
-	req, err := http.NewRequest("GET", "http://example.com/", nil)
-	if err != nil {
-		log.Fatal(err)
-	}
+	s.GET("/test", xhttp.HandlerFunc(func(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "test")
+	}))
 
-	req2, err := http.NewRequest("HEAD", "http://example.com/", nil)
+	s.GET("/test/3564", xhttp.HandlerFunc(func(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "ok")
+	}))
+
+	s.POST("/test/3564", xhttp.HandlerFunc(func(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "this is a post request")
+	}))
+
+	req, err := http.NewRequest("GET", "http://example.com/go/14", nil)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, req)
-	s.ServeHTTP(w, req2)
 
 	fmt.Printf("%d - %s", w.Code, w.Body.String())
-	// Output: 200 - OK OK OK A B C
+	// Output: 200 - OK OK OK A rainbow Be very Colorful
 }
 
 // Let's create a catchAll Handler i.e. an object implementing HandlerLinker.

@@ -3,11 +3,11 @@ package session
 import (
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/atdiar/errors"
 	"github.com/atdiar/flag"
 )
 
@@ -235,7 +235,7 @@ func (c Cookie) Touch(maxages ...int) {
 func (c Cookie) Encode() (http.Cookie, error) {
 	jval, err := json.Marshal(c.Data)
 	if err != nil {
-		return http.Cookie{}, err
+		return http.Cookie{}, errors.New("Encoding failure for session cookie.").Wraps(err)
 	}
 	v := ComputeHmac256(jval, []byte(c.Secret)) + c.Delimiter + base64.StdEncoding.EncodeToString(jval)
 	if len(v) > 4000 {
@@ -243,7 +243,7 @@ func (c Cookie) Encode() (http.Cookie, error) {
 	}
 	c.Config.Value = v
 	c.UpdateFlag.Set(false)
-	return *(c.Config), err
+	return *(c.Config), nil
 }
 
 // Decode is used to deserialize the session cookie in order to make the stored
@@ -254,17 +254,20 @@ func (c Cookie) Decode(http.Cookie) error {
 	// let's split the two components on the string-marshalled metadata (raw + Encoded)
 	s := strings.Split(c.Secret, c.Delimiter)
 	if len(s) <= 1 || len(s) > 4000 {
-		return errors.New("Bad cookie in request")
+		return ErrBadCookie.Wraps(errors.New("Cookie seems to have been tampered with. Size too large"))
 	}
 
 	ok, err := VerifySignature(s[1], s[0], c.Secret)
 	if !ok {
-		return err
+		return ErrBadCookie.Wraps(err)
 	}
 	str, err := base64.StdEncoding.DecodeString(s[1])
 	if err != nil {
-		return err
+		return ErrBadCookie.Wraps(err)
 	}
 	err = json.Unmarshal(str, &(c.Data))
-	return err
+	if err != nil {
+		return ErrBadCookie.Wraps(err)
+	}
+	return nil
 }

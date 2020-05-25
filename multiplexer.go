@@ -4,9 +4,11 @@ package xhttp
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 )
 
 // ServeMux holds the multiplexing logic of incoming http requests.
@@ -14,8 +16,10 @@ import (
 // It facilitates the registration of request handlers.
 type ServeMux struct {
 	catchAll        HandlerLinker
-	routeHandlerMap map[string]verbsHandlerList
-	*http.ServeMux
+	Once            *sync.Once
+	routeHandlerMap map[string]httpVerbFunctions
+	ServeMux        *http.ServeMux
+	initErr         []error
 }
 
 // NewServeMux creates a new multiplexer wrapper which holds the request
@@ -25,53 +29,75 @@ type ServeMux struct {
 func NewServeMux() ServeMux {
 	sm := ServeMux{}
 	sm.ServeMux = http.NewServeMux()
-	sm.routeHandlerMap = make(map[string]verbsHandlerList)
+	sm.Once = new(sync.Once)
+	sm.routeHandlerMap = make(map[string]httpVerbFunctions)
+	sm.initErr = nil
+
 	return sm
 }
 
 // ServeHTTP is the request-servicing function for an object of type ServeMux.
-func (sm ServeMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	// Let's get the pattern first.
-	_, pattern := sm.ServeMux.Handler(req)
+func (sm *ServeMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if sm.initErr != nil {
+		var errstr string
+		for _, s := range sm.initErr {
+			errstr = errstr + s.Error()
+		}
+		panic(errstr)
+	}
 
-	// Let's check whether a handler has been registered for this pattern.
-	if vh, ok := sm.routeHandlerMap[pattern]; ok {
-
+	// Let's check whether a handler has been registered for the path
+	var longestpath string
+	vh, ok := sm.routeHandlerMap[req.URL.Path]
+	method := strings.ToUpper(req.Method)
+	if !ok {
+		for pathname, v := range sm.routeHandlerMap {
+			if strings.HasSuffix(pathname, "/") {
+				if strings.HasPrefix(req.URL.Path, pathname) {
+					if len(pathname) > len(longestpath) {
+						longestpath = pathname
+						vh = v
+					}
+				}
+			}
+		}
+	} else {
+		longestpath = req.URL.Path
+	}
+	if longestpath != "" {
 		// Let's extract the http Method and apply the handler if it exists.
-		method := strings.ToUpper(req.Method)
 		switch method {
 		case "GET":
-			vh.get.ServeHTTP(req.Context(), w, req)
+			sm.catchAll.Link(vh.get).ServeHTTP(req.Context(), w, req)
 		case "POST":
-			vh.post.ServeHTTP(req.Context(), w, req)
+			sm.catchAll.Link(vh.post).ServeHTTP(req.Context(), w, req)
 		case "PUT":
-			vh.put.ServeHTTP(req.Context(), w, req)
+			sm.catchAll.Link(vh.put).ServeHTTP(req.Context(), w, req)
 		case "PATCH":
-			vh.patch.ServeHTTP(req.Context(), w, req)
+			sm.catchAll.Link(vh.patch).ServeHTTP(req.Context(), w, req)
 		case "DELETE":
-			vh.delete.ServeHTTP(req.Context(), w, req)
+			sm.catchAll.Link(vh.delete).ServeHTTP(req.Context(), w, req)
 		case "HEAD":
-			vh.head.ServeHTTP(req.Context(), noBodyWriter{w}, req)
+			sm.catchAll.Link(vh.head).ServeHTTP(req.Context(), w, req)
 		case "OPTIONS":
-			vh.options.ServeHTTP(req.Context(), w, req)
+			sm.catchAll.Link(vh.options).ServeHTTP(req.Context(), w, req)
 		case "CONNECT":
-			vh.connect.ServeHTTP(req.Context(), w, req)
+			sm.catchAll.Link(vh.connect).ServeHTTP(req.Context(), w, req)
 		case "TRACE":
-			vh.trace.ServeHTTP(req.Context(), w, req)
+			sm.catchAll.Link(vh.trace).ServeHTTP(req.Context(), w, req)
 		default:
 			http.Error(w, http.StatusText(405), 405)
 		}
-	} else {
-		// If nothing was registered by any other entity, h will default to
-		// a page not found handler (404)
-		h, _ := sm.ServeMux.Handler(req)
-		h.ServeHTTP(w, req)
 	}
+
+	// todo check if a handler exists that is not http.ServeMux
+	// 404
+
 }
 
-// verbsHandlerList is a structure that lists the request handlers for each http
+// httpVerbFunctions is a structure that lists the request handlers for each http
 // verb.
-type verbsHandlerList struct {
+type httpVerbFunctions struct {
 	get     transformableHandler
 	post    transformableHandler
 	put     transformableHandler
@@ -83,16 +109,17 @@ type verbsHandlerList struct {
 	trace   transformableHandler
 }
 
-func (vh *verbsHandlerList) prepend(h HandlerLinker) {
-	vh.get.prepend(h)
-	vh.post.prepend(h)
-	vh.put.prepend(h)
-	vh.patch.prepend(h)
-	vh.delete.prepend(h)
-	vh.head.prepend(h)
-	vh.options.prepend(h)
-	vh.connect.prepend(h)
-	vh.trace.prepend(h)
+func (vh httpVerbFunctions) prepend(h HandlerLinker) httpVerbFunctions {
+	vh.get = vh.get.prepend(h)
+	vh.post = vh.post.prepend(h)
+	vh.put = vh.put.prepend(h)
+	vh.patch = vh.patch.prepend(h)
+	vh.delete = vh.delete.prepend(h)
+	vh.head = vh.head.prepend(h)
+	vh.options = vh.options.prepend(h)
+	vh.connect = vh.connect.prepend(h)
+	vh.trace = vh.trace.prepend(h)
+	return vh
 }
 
 // transformableHandler is defined per pattern and per verb.
@@ -100,59 +127,81 @@ func (vh *verbsHandlerList) prepend(h HandlerLinker) {
 // used to prepend catchall request handlers more easily.
 // It implements the Handler interface.
 type transformableHandler struct {
-	input   Handler
+	in      Handler
 	Handler // output
 }
 
-func (t *transformableHandler) register(h Handler) {
-	t.input = h
+func (t transformableHandler) register(h Handler) transformableHandler {
+	t.in = h
 	t.Handler = h
+	return t
 }
 
-func (t *transformableHandler) prepend(h HandlerLinker) {
+func (t transformableHandler) prepend(h HandlerLinker) transformableHandler {
 	if h != nil {
-		t.Handler = h.Link(t.input)
+		t.Handler = h.Link(t.in)
 	}
+	return t
 }
 
 // HANDLER REGISTRATION
 
-// GET registers the request Handler for the servicing of http GET requests.
-// It also deals with the handling of HEAD requests which commands an identical
-// response to GET requests if not for the lack message-body.
-func (sm *ServeMux) GET(pattern string, h Handler) {
-
+func muxCheck(sm *ServeMux, method string, pattern string, h Handler) {
 	if h == nil {
-		panic("ERROR: Handler should not be nil.")
+		sm.initErr = append(sm.initErr, error(errors.New(method+" "+pattern+": request handler nil\n")))
+		return
 	}
 
-	routehandler, ok := sm.routeHandlerMap[pattern]
-	if !ok {
+	if pattern == "" {
+		sm.initErr = append(sm.initErr, error(errors.New(method+" "+pattern+": request pattern invalid\n")))
+		return
+	}
+
+	r, err := http.NewRequest(method, pattern, nil)
+	if err != nil {
+		sm.initErr = append(sm.initErr, error(errors.New(method+" "+pattern+": request handler nil\n")))
+		return
+	}
+	rh, path := sm.ServeMux.Handler(r)
+	if path == "" || path != pattern {
+		// it means that no handler has been registered for this route on the underlying
+		// ServeMux. We can thus register sm.
 		sm.ServeMux.Handle(pattern, sm)
+	} else {
+		// A handler has already been registered. If it is sm, we can continue.
+		// Otherwise, we can't.
+		if han, ok := rh.(*ServeMux); !ok || (han != sm) {
+			sm.initErr = append(sm.initErr, error(errors.New(method+" "+pattern+": request handler already exists\n")))
+			return
+		}
 	}
-	routehandler.get.register(h)
-	routehandler.get.prepend(sm.catchAll)
+}
 
-	routehandler.head.register(h)
-	routehandler.head.prepend(sm.catchAll)
+// GET registers the request Handler for the servicing of http GET requests.
+// It also handles HEAD requests wby creating an identical
+// response to GET requests without the request body.
+func (sm *ServeMux) GET(pattern string, h Handler) {
+	muxCheck(sm, "GET", pattern, h)
+
+	routehandler, _ := sm.routeHandlerMap[pattern]
+
+	routehandler.get = routehandler.get.register(h)
+
+	routehandler.head = routehandler.head.register(h)
 
 	sm.routeHandlerMap[pattern] = routehandler
+
 }
 
 // POST registers the request Handler for the servicing of http POST requests.
 func (sm *ServeMux) POST(pattern string, h Handler) {
 
-	if h == nil {
-		panic("ERROR: Handler should not be nil.")
-	}
+	muxCheck(sm, "POST", pattern, h)
 
-	routehandler, ok := sm.routeHandlerMap[pattern]
-	if !ok {
-		sm.ServeMux.Handle(pattern, sm)
-	}
+	routehandler, _ := sm.routeHandlerMap[pattern]
 
-	routehandler.post.register(h)
-	routehandler.post.prepend(sm.catchAll)
+	routehandler.post = routehandler.post.register(h)
+
 	sm.routeHandlerMap[pattern] = routehandler
 
 }
@@ -160,17 +209,12 @@ func (sm *ServeMux) POST(pattern string, h Handler) {
 // PUT registers the request Handler for the servicing of http PUT requests.
 func (sm *ServeMux) PUT(pattern string, h Handler) {
 
-	if h == nil {
-		panic("ERROR: Handler should not be nil.")
-	}
+	muxCheck(sm, "PUT", pattern, h)
 
-	routehandler, ok := sm.routeHandlerMap[pattern]
-	if !ok {
-		sm.ServeMux.Handle(pattern, *sm)
-	}
+	routehandler, _ := sm.routeHandlerMap[pattern]
 
-	routehandler.put.register(h)
-	routehandler.put.prepend(sm.catchAll)
+	routehandler.put = routehandler.put.register(h)
+
 	sm.routeHandlerMap[pattern] = routehandler
 
 }
@@ -178,17 +222,12 @@ func (sm *ServeMux) PUT(pattern string, h Handler) {
 // PATCH registers the request Handler for the servicing of http PATCH requests.
 func (sm *ServeMux) PATCH(pattern string, h Handler) {
 
-	if h == nil {
-		panic("ERROR: Handler should not be nil.")
-	}
+	muxCheck(sm, "PATCH", pattern, h)
 
-	routehandler, ok := sm.routeHandlerMap[pattern]
-	if !ok {
-		sm.ServeMux.Handle(pattern, *sm)
-	}
+	routehandler, _ := sm.routeHandlerMap[pattern]
 
-	routehandler.patch.register(h)
-	routehandler.patch.prepend(sm.catchAll)
+	routehandler.patch = routehandler.patch.register(h)
+
 	sm.routeHandlerMap[pattern] = routehandler
 
 }
@@ -196,17 +235,12 @@ func (sm *ServeMux) PATCH(pattern string, h Handler) {
 // DELETE registers the request Handler for the servicing of http DELETE requests.
 func (sm *ServeMux) DELETE(pattern string, h Handler) {
 
-	if h == nil {
-		panic("ERROR: Handler should not be nil.")
-	}
+	muxCheck(sm, "DELETE", pattern, h)
 
-	routehandler, ok := sm.routeHandlerMap[pattern]
-	if !ok {
-		sm.ServeMux.Handle(pattern, *sm)
-	}
+	routehandler, _ := sm.routeHandlerMap[pattern]
 
-	routehandler.delete.register(h)
-	routehandler.delete.prepend(sm.catchAll)
+	routehandler.delete = routehandler.delete.register(h)
+
 	sm.routeHandlerMap[pattern] = routehandler
 
 }
@@ -214,17 +248,12 @@ func (sm *ServeMux) DELETE(pattern string, h Handler) {
 // OPTIONS registers the request Handler for the servicing of http OPTIONS requests.
 func (sm *ServeMux) OPTIONS(pattern string, h Handler) {
 
-	if h == nil {
-		panic("ERROR: Handler should not be nil.")
-	}
+	muxCheck(sm, "OPTIONS", pattern, h)
 
-	routehandler, ok := sm.routeHandlerMap[pattern]
-	if !ok {
-		sm.ServeMux.Handle(pattern, *sm)
-	}
+	routehandler, _ := sm.routeHandlerMap[pattern]
 
-	routehandler.options.register(h)
-	routehandler.options.prepend(sm.catchAll)
+	routehandler.options = routehandler.options.register(h)
+
 	sm.routeHandlerMap[pattern] = routehandler
 
 }
@@ -233,17 +262,12 @@ func (sm *ServeMux) OPTIONS(pattern string, h Handler) {
 func (sm *ServeMux) CONNECT(h Handler) {
 	pattern := "/"
 
-	if h == nil {
-		panic("ERROR: Handler should not be nil.")
-	}
+	muxCheck(sm, "CONNECT", pattern, h)
 
-	routehandler, ok := sm.routeHandlerMap[pattern]
-	if !ok {
-		sm.ServeMux.Handle(pattern, *sm)
-	}
+	routehandler, _ := sm.routeHandlerMap[pattern]
 
-	routehandler.connect.register(h)
-	routehandler.connect.prepend(sm.catchAll)
+	routehandler.connect = routehandler.connect.register(h)
+
 	sm.routeHandlerMap[pattern] = routehandler
 
 }
@@ -251,34 +275,25 @@ func (sm *ServeMux) CONNECT(h Handler) {
 // TRACE registers the request Handler for the servicing of http TRACE requests.
 func (sm *ServeMux) TRACE(pattern string, h Handler) {
 
-	if h == nil {
-		panic("ERROR: Handler should not be nil.")
-	}
+	muxCheck(sm, "TRACE", pattern, h)
 
-	routehandler, ok := sm.routeHandlerMap[pattern]
-	if !ok {
-		sm.ServeMux.Handle(pattern, *sm)
-	}
+	routehandler, _ := sm.routeHandlerMap[pattern]
 
-	routehandler.trace.register(h)
-	routehandler.trace.prepend(sm.catchAll)
+	routehandler.trace = routehandler.trace.register(h)
+
 	sm.routeHandlerMap[pattern] = routehandler
 
 }
 
 // USE registers linkable request Handlers (i.e. implementing HandlerLinker)
 // which shall be servicing any path, regardless of the request method.
+// This function should only be called once.
 func (sm *ServeMux) USE(handlers ...HandlerLinker) {
 	linkable := Chain(handlers...)
 	if sm.catchAll != nil {
-		ca := sm.catchAll.Link(linkable)
-		sm.catchAll = ca
+		sm.initErr = append(sm.initErr, error(errors.New("USE has already been called once.\n")))
 	} else {
 		sm.catchAll = linkable
-	}
-	for method, vh := range sm.routeHandlerMap {
-		vh.prepend(sm.catchAll)
-		sm.routeHandlerMap[method] = vh
 	}
 }
 
@@ -328,17 +343,17 @@ func (h handlerchain) Link(l Handler) HandlerLinker {
 	return h
 }
 
-// noBodyWriter implements http.ResponseWriter but does not allow writing
+// noopBodywriter implements http.ResponseWriter but does not allow writing
 // a message-body in response to a http request. It is used to derive the
 // response to a HEAD request from the response that would be returned from a
 // GET request.
-type noBodyWriter struct {
+type noopBodywriter struct {
 	http.ResponseWriter
 }
 
-func (nbw noBodyWriter) Write([]byte) (int, error) { return 200, nil }
+func (nbw noopBodywriter) Write([]byte) (int, error) { return 200, nil }
 
-func (nbw noBodyWriter) Wrappee() http.ResponseWriter { return nbw.ResponseWriter }
+func (nbw noopBodywriter) Wrappee() http.ResponseWriter { return nbw.ResponseWriter }
 
 func patternMatch(url *url.URL, pattern string, vars map[string]string) bool {
 	uri := url.RequestURI()

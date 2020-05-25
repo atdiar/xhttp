@@ -365,14 +365,14 @@ func (h Handler) Load(ctx context.Context, res http.ResponseWriter, req *http.Re
 		reqc, err := req.Cookie(h.Cookie.Config.Name)
 		if err != nil {
 			// We should generate a new session since there is no cookie at the next step
-			return ctx, ErrNoCookie
+			return ctx, ErrNoCookie.Wraps(err)
 		}
 		err = h.Cookie.Decode(*reqc)
 		if err != nil {
 			if h.Log != nil {
-				h.Log.Println(err)
+				h.Log.Println(errors.New("Bad cookie").Wraps(err))
 			}
-			return ctx, ErrBadCookie
+			return ctx, ErrBadCookie.Wraps(err)
 		}
 		return h.Save(ctx, res, req)
 	}
@@ -419,12 +419,12 @@ func (h Handler) Generate(ctx context.Context, res http.ResponseWriter, req *htt
 
 // ServeHTTP effectively makes the session a xhttp request handler.
 func (h Handler) ServeHTTP(ctx context.Context, res http.ResponseWriter, req *http.Request) {
+	ctx = context.WithValue(ctx, "test", "test")
 	// We want any potential caching system to remain aware of changes to the
 	// cookie header. As such, we have to add a Vary header.
 	res.Header().Add("Vary", "Cookie")
 
 	c, err := h.Load(ctx, res, req)
-
 	if err != nil {
 		c, err = h.Generate(c, res, req)
 		if err != nil {
@@ -444,27 +444,29 @@ func (h Handler) Link(hn xhttp.Handler) xhttp.HandlerLinker {
 	return h
 }
 
-// OrderedGroup groups sessions by increasing priority order. It is useful When
+// Ordered groups sessions by increasing priority order. It is useful When
 // a user has several sessions still valid (unsigned, signed, admin etc) with
 // different settings.
 // For example, on authentication and user signing, we can switch from using an
 // unsigned user session handler to the one for signed-in user.
 // Typically, these sessions are not mutually exclusive meaning that using one
 // session does not expire the other ones.
-type OrderedGroup struct {
+type Ordered struct {
 	Handlers []Handler
 	next     xhttp.Handler
 }
 
-func NewOrderedGroup(sessions ...Handler) OrderedGroup {
-	return OrderedGroup{sessions, nil}
+// SelectHighest returns a session management http request handler with sessions
+// inserted from lowest priority to highest.
+func SelectHighest(sessions ...Handler) Ordered {
+	return Ordered{sessions, nil}
 }
 
 // Get will retrieve the value corresponding to a given store key from
 // the relevant session store.
 // It finds out the relevant session by checking existence of the session
 // ContextKey inside.
-func (o OrderedGroup) Get(ctx context.Context, key string) (res []byte, err error) {
+func (o Ordered) Get(ctx context.Context, key string) (res []byte, err error) {
 	if o.Handlers == nil {
 		return nil, errors.New("No handler registered")
 	}
@@ -480,7 +482,7 @@ func (o OrderedGroup) Get(ctx context.Context, key string) (res []byte, err erro
 // Put will save a key/value pair in the relevant session store.
 // It finds out the relevant session by checking existence of the session
 // ContextKey inside.
-func (o OrderedGroup) Put(ctx context.Context, key string, value []byte, maxage time.Duration) error {
+func (o Ordered) Put(ctx context.Context, key string, value []byte, maxage time.Duration) error {
 	if o.Handlers == nil {
 		return errors.New("No handler registered")
 	}
@@ -496,7 +498,7 @@ func (o OrderedGroup) Put(ctx context.Context, key string, value []byte, maxage 
 // Delete will erase a session store item from the relevant session.
 // It finds out the relevant session by checking existence of the session
 // ContextKey inside.
-func (o OrderedGroup) Delete(ctx context.Context, key string) error {
+func (o Ordered) Delete(ctx context.Context, key string) error {
 	if o.Handlers == nil {
 		return errors.New("No handler registered")
 	}
@@ -513,7 +515,7 @@ func (o OrderedGroup) Delete(ctx context.Context, key string) error {
 // handled. Otherwise, it will try loading the metadata directly from the request
 // object if it exists. If none works, an error is returned.
 // Not safe for concurrent use by multiple goroutines.
-func (o OrderedGroup) Load(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
+func (o Ordered) Load(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
 	if o.Handlers == nil {
 		return ctx, errors.New("No handler registered")
 	}
@@ -530,7 +532,7 @@ func (o OrderedGroup) Load(ctx context.Context, res http.ResponseWriter, req *ht
 // It needs to be called to apply session data changes.
 // These changes entail a modification in the value of the  relevant session cookie.
 // Not safe for concurrent use by multiple goroutines.
-func (o OrderedGroup) Save(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
+func (o Ordered) Save(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
 	if o.Handlers == nil {
 		return ctx, nil
 	}
@@ -544,7 +546,7 @@ func (o OrderedGroup) Save(ctx context.Context, res http.ResponseWriter, req *ht
 }
 
 // Generate creates a completely new session corresponding to a given session ContextKey.
-func (o OrderedGroup) Generate(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
+func (o Ordered) Generate(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
 	if o.Handlers == nil {
 		return ctx, nil
 	}
@@ -558,7 +560,7 @@ func (o OrderedGroup) Generate(ctx context.Context, res http.ResponseWriter, req
 }
 
 // ServeHTTP effectively makes the session a xhttp request handler.
-func (o OrderedGroup) ServeHTTP(ctx context.Context, res http.ResponseWriter, req *http.Request) {
+func (o Ordered) ServeHTTP(ctx context.Context, res http.ResponseWriter, req *http.Request) {
 	// We want any potential caching system to remain aware of changes to the
 	// cookie header. As such, we have to add a Vary header.
 	res.Header().Add("Vary", "Cookie")
@@ -579,24 +581,32 @@ func (o OrderedGroup) ServeHTTP(ctx context.Context, res http.ResponseWriter, re
 }
 
 // Link enables the linking of a xhttp.Handler to the session Handler.
-func (o OrderedGroup) Link(hn xhttp.Handler) xhttp.HandlerLinker {
+func (o Ordered) Link(hn xhttp.Handler) xhttp.HandlerLinker {
 	o.next = hn
 	return o
 }
 
-// Group defines an ensemble of session handlers that can be used for a specific
+//  Grouped defines an ensemble of session handlers that can be used for a specific
 // http route. only one sesssion per group can be used to process a http request.
-// Hence, the sessions in a group are mutually exclusive.
-type Group struct {
+// Hence, the sessions are mutually exclusive.
+type Grouped struct {
 	Handlers map[*contextKey]Handler
 	next     xhttp.Handler
+}
+
+func SelectFrom(sessions ...Handler) Grouped {
+	m := make(map[*contextKey]Handler)
+	for _, session := range sessions {
+		m[session.ContextKey] = session
+	}
+	return Grouped{m, nil}
 }
 
 // Get will retrieve the value corresponding to a given store key from
 // the relevant session store.
 // It finds out the relevant session by checking existence of the session
 // ContextKey inside.
-func (g Group) Get(ctx context.Context, key string) (res []byte, err error) {
+func (g Grouped) Get(ctx context.Context, key string) (res []byte, err error) {
 	if g.Handlers == nil {
 		return nil, errors.New("No handler registered")
 	}
@@ -612,7 +622,7 @@ func (g Group) Get(ctx context.Context, key string) (res []byte, err error) {
 // Put will save a key/value pair in the relevant session store.
 // It finds out the relevant session by checking existence of the session
 // ContextKey inside.
-func (o Group) Put(ctx context.Context, key string, value []byte, maxage time.Duration) error {
+func (o Grouped) Put(ctx context.Context, key string, value []byte, maxage time.Duration) error {
 	if o.Handlers == nil {
 		return errors.New("No handler registered")
 	}
@@ -630,7 +640,7 @@ func (o Group) Put(ctx context.Context, key string, value []byte, maxage time.Du
 // Delete will erase a session store item from the relevant session.
 // It finds out the relevant session by checking existence of the session
 // ContextKey inside.
-func (o Group) Delete(ctx context.Context, key string) error {
+func (o Grouped) Delete(ctx context.Context, key string) error {
 	if o.Handlers == nil {
 		return errors.New("No handler registered")
 	}
@@ -648,7 +658,7 @@ func (o Group) Delete(ctx context.Context, key string) error {
 // handled. Otherwise, it will try loading the metadata directly from the request
 // object if it exists. If none works, an error is returned.
 // Not safe for concurrent use by multiple goroutines.
-func (o Group) Load(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
+func (o Grouped) Load(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
 	if o.Handlers == nil {
 		return ctx, errors.New("No handler registered")
 	}
@@ -665,7 +675,7 @@ func (o Group) Load(ctx context.Context, res http.ResponseWriter, req *http.Requ
 // It needs to be called to apply session data changes.
 // These changes entail a modification in the value of the  relevant session cookie.
 // Not safe for concurrent use by multiple goroutines.
-func (o Group) Save(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
+func (o Grouped) Save(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
 	if o.Handlers == nil {
 		return ctx, nil
 	}
@@ -679,7 +689,7 @@ func (o Group) Save(ctx context.Context, res http.ResponseWriter, req *http.Requ
 }
 
 // Generate creates a completely new session corresponding to a given session ContextKey.
-func (o Group) Generate(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
+func (o Grouped) Generate(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
 	if o.Handlers == nil {
 		return ctx, nil
 	}
@@ -693,7 +703,7 @@ func (o Group) Generate(ctx context.Context, res http.ResponseWriter, req *http.
 }
 
 // ServeHTTP effectively makes the session a xhttp request handler.
-func (g Group) ServeHTTP(ctx context.Context, res http.ResponseWriter, req *http.Request) {
+func (g Grouped) ServeHTTP(ctx context.Context, res http.ResponseWriter, req *http.Request) {
 	// We want any potential caching system to remain aware of changes to the
 	// cookie header. As such, we have to add a Vary header.
 	res.Header().Add("Vary", "Cookie")
@@ -713,17 +723,9 @@ func (g Group) ServeHTTP(ctx context.Context, res http.ResponseWriter, req *http
 }
 
 // Link enables the linking of a xhttp.Handler to the session Handler.
-func (g Group) Link(hn xhttp.Handler) xhttp.HandlerLinker {
+func (g Grouped) Link(hn xhttp.Handler) xhttp.HandlerLinker {
 	g.next = hn
 	return g
-}
-
-func NewGroup(sessions ...Handler) Group {
-	m := make(map[*contextKey]Handler)
-	for _, session := range sessions {
-		m[session.ContextKey] = session
-	}
-	return Group{m, nil}
 }
 
 // ComputeHmac256 returns a base64 Encoded MAC.
