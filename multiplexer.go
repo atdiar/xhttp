@@ -37,7 +37,7 @@ func NewServeMux() ServeMux {
 }
 
 // ServeHTTP is the request-servicing function for an object of type ServeMux.
-func (sm *ServeMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+func (sm ServeMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if sm.initErr != nil {
 		var errstr string
 		for _, s := range sm.initErr {

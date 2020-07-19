@@ -3,20 +3,20 @@
 package session
 
 import (
+	"context"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"log"
 	"net/http"
 	"time"
 
-	"context"
-
 	"github.com/atdiar/errcode"
+
 	"github.com/atdiar/errors"
 	"github.com/atdiar/flag"
 	"github.com/atdiar/xhttp"
-	"github.com/satori/go.uuid"
 )
 
 var (
@@ -27,7 +27,7 @@ var (
 	// ErrBadCookie is returned when the session cookie is invalid.
 	ErrBadCookie = errors.New("Bad session cookie. Retry.").Code(errcode.BadCookie)
 	// ErrNoCookie is returned when the session cookie is absent
-	ErrNoCookie = errors.New("Session Cookie absent.").Code(errcode.BadCookie)
+	ErrNoCookie = errors.New("Session cookie absent.").Code(errcode.BadCookie)
 	// ErrBadStorage is returned when session storage is faulty.
 	ErrBadStorage = errors.New("Invalid storage.").Code(errcode.BadStorage)
 	// ErrExpired is returned when the session has expired.
@@ -35,7 +35,11 @@ var (
 	// ErrKeyNotFound is returned when getting the value for a given key from the cookie
 	// store failed.
 	ErrKeyNotFound = errors.New("Key missing or expired").Code(errcode.KeyNotFound)
+	// ErrNoSession is returned when no session has been found for loading
+	ErrNoSession = errors.New("No session").Code(errcode.NoSession)
 )
+
+// todo mitigate session fixation
 
 type contextKey struct{}
 
@@ -74,7 +78,7 @@ type Interface interface {
 	Put(key string, value []byte, maxage time.Duration) error
 	Delete(key string) error
 	Load(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error)
-	Save(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error)
+	SetSessionCookie(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error)
 	Generate(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error)
 }
 
@@ -115,10 +119,16 @@ func New(name string, secret string, options ...func(Handler) Handler) Handler {
 	h.Secret = secret
 	h.ContextKey = &contextKey{}
 	h.CachingEnabled = flag.NewCC()
+	h.CachingEnabled.Set(false) // by default
 
-	h.Cookie = NewCookie(name, secret, 0, "")
+	h.Cookie = NewCookie(name, secret, 0)
 	h.uuidgen = func() (string, error) {
-		return uuid.NewV4().String(), nil
+		b := make([]byte, 70)
+		_, err := rand.Read(b)
+		if err != nil {
+			return "", err
+		}
+		return string(b), nil
 	}
 
 	if options != nil {
@@ -168,10 +178,13 @@ func SetCache(c Cache) func(Handler) Handler {
 	}
 }
 
-func SetUUIDgenerator(f func() (string, error)) func(Handler) Handler {
-	return func(h Handler) Handler {
-		h.uuidgen = f
-		return h
+func FixedUUID(id string) func(Handler) Handler {
+	return func(s Handler) Handler {
+		s.uuidgen = func() (string, error) {
+			return id, nil
+		}
+		s.Cookie.SetID(id)
+		return s
 	}
 }
 
@@ -192,7 +205,7 @@ func (h Handler) Get(key string) ([]byte, error) {
 		}
 		v, ok := h.Cookie.Get(key)
 		if !ok {
-			return nil, ErrNoID
+			return nil, ErrKeyNotFound
 		}
 		return []byte(v), nil
 	}
@@ -201,16 +214,17 @@ func (h Handler) Get(key string) ([]byte, error) {
 		if err != nil {
 			err2 := h.Cache.Clear()
 			if err2 != nil {
+				// there must be a problem with the cache, let's turn it off.
 				h.CachingEnabled.Flip()
 				if h.Log != nil {
 					h.Log.Println(err, err2)
 				}
 			}
 		} else {
+			// if we hit the cache, let's return the result.
 			return res, nil
 		}
 	}
-
 	// On cache miss, we fetch from store/cookiestore and then try to update the cache
 	// with the result before returning it.
 	if h.Store != nil {
@@ -268,6 +282,8 @@ func (h Handler) Get(key string) ([]byte, error) {
 }
 
 // Put will save a key/value pair in the session store.
+// if maxage < 0, the key/session should expire immediately.
+// if maxage = 0, the key/session has no set expiry.
 func (h Handler) Put(key string, value []byte, maxage time.Duration) error {
 	id, ok := h.Cookie.ID()
 	if !ok {
@@ -293,7 +309,6 @@ func (h Handler) Put(key string, value []byte, maxage time.Duration) error {
 				}
 			}
 		}
-
 		return nil
 	}
 
@@ -352,74 +367,81 @@ func (h Handler) Delete(key string) error {
 	return nil
 }
 
-// Load will try to recover the session handler state if it was previously
-// handled. Otherwise, it will try loading the metadata directly from the request
-// object if it exists. If none works, an error is returned.
-// Not safe for concurrent use by multiple goroutines.
-func (h Handler) Load(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
-	dt := ctx.Value(h.ContextKey)
+// Load attempts to find the latest version of the session cookie that will be set
+// in the response.
+func (h *Handler) Load(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
+	c, ok := ctx.Value(h.ContextKey).(http.Cookie)
+	if !ok {
+		// in this case, there is no session cookie already set;
+		// perhaps the session got modified in flight but the cookie was never set (let's log for this)
+		// We try to retrieve a session cookie from the request.
 
-	if dt == nil {
-		// in this case, there is no session already loaded and saved.
-		// we try to retrieve a session cookie.
-		reqc, err := req.Cookie(h.Cookie.Config.Name)
+		// in case the session is reloaded during requets handling but the session cookies has not been set
+		if h.Cookie.ApplyMods.IsTrue() {
+			if h.Log != nil {
+				h.Log.Print("session cookie got modifications that have not been persisted by setting a http cookie")
+			}
+		}
+
+		// Let's try to load a session cookie value from the request
+		reqc, err := req.Cookie(h.Name)
 		if err != nil {
-			// We should generate a new session since there is no cookie at the next step
-			return ctx, ErrNoCookie.Wraps(err)
+			// at this point, should generate a new session since there is no session cookie
+			// sent by the client.
+			return context.WithValue(ctx, h.ContextKey, ErrBadSession), err
 		}
 		err = h.Cookie.Decode(*reqc)
 		if err != nil {
 			if h.Log != nil {
 				h.Log.Println(errors.New("Bad cookie").Wraps(err))
 			}
-			return ctx, ErrBadCookie.Wraps(err)
+			return context.WithValue(ctx, h.ContextKey, ErrBadCookie), ErrBadCookie.Wraps(err)
 		}
-		return h.Save(ctx, res, req)
+		h.Cookie.ApplyMods.Set(false)
+		return context.WithValue(ctx, h.ContextKey, *(h.Cookie.HttpCookie)), nil
 	}
-	c := dt.(http.Cookie)
-	h.Cookie.Config = &c
-	if h.Cookie.UpdateFlag.IsTrue() {
-		return h.Save(ctx, res, req)
+	err := h.Cookie.Decode(c)
+	if err != nil {
+		return ctx, errors.New("couldn't load session cookie").Wraps(err)
 	}
 	return ctx, nil
 }
 
-// Save will update and keep the session data in the per-request context store.
+// SetSessionCookie will modify and keep the session data in the per-request context store.
 // It needs to be called to apply session data changes.
 // These changes entail a modification in the value of the session cookie.
+// The session cookie is stored in the context.Context non-encoded.
 // Not safe for concurrent use by multiple goroutines.
-func (h Handler) Save(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
+func (h *Handler) SetSessionCookie(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
 	hc, err := h.Cookie.Encode()
 	if err != nil {
 		return ctx, err
 	}
-	res.Header().Add("Set-Cookie", hc.String())
-	h.Cookie.UpdateFlag.Set(false)
+	http.SetCookie(res, &hc)
+	h.Cookie.ApplyMods.Set(false)
 	return context.WithValue(ctx, h.ContextKey, hc), nil
 }
 
 // Generate creates a completely new session.
-func (h Handler) Generate(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
-
+func (h *Handler) Generate(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
 	// 1. Create UUID
 	id, err := h.uuidgen()
 	if err != nil {
 		return ctx, err
 	}
 
-	// 3. Update session cookie
+	// 2. Update session cookie
 	for k := range h.Cookie.Data {
 		delete(h.Cookie.Data, k)
 	}
 	h.Cookie.SetID(id)
-	h.Cookie.UpdateFlag.Set(true)
+	h.Cookie.ApplyMods.Set(true)
 
-	return h.Save(ctx, res, req)
+	return h.SetSessionCookie(ctx, res, req)
 }
 
 // ServeHTTP effectively makes the session a xhttp request handler.
 func (h Handler) ServeHTTP(ctx context.Context, res http.ResponseWriter, req *http.Request) {
-	ctx = context.WithValue(ctx, "test", "test")
 	// We want any potential caching system to remain aware of changes to the
 	// cookie header. As such, we have to add a Vary header.
 	res.Header().Add("Vary", "Cookie")
@@ -431,6 +453,11 @@ func (h Handler) ServeHTTP(ctx context.Context, res http.ResponseWriter, req *ht
 			http.Error(res, "Unable to generate session", http.StatusInternalServerError)
 			return
 		}
+	}
+	c, err = h.SetSessionCookie(c, res, req)
+	if err != nil {
+		http.Error(res, "Unable to set session cookie", http.StatusInternalServerError)
+		return
 	}
 
 	if h.next != nil {
@@ -528,17 +555,17 @@ func (o Ordered) Load(ctx context.Context, res http.ResponseWriter, req *http.Re
 	return ctx, nil
 }
 
-// Save will update and keep the session data in the per-request context store.
+// SetSessionCookie will update and keep the session data in the per-request context store.
 // It needs to be called to apply session data changes.
 // These changes entail a modification in the value of the  relevant session cookie.
 // Not safe for concurrent use by multiple goroutines.
-func (o Ordered) Save(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
+func (o Ordered) SetSessionCookie(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
 	if o.Handlers == nil {
 		return ctx, nil
 	}
 	for i := len(o.Handlers) - 1; i >= 0; i++ {
 		if v := ctx.Value(o.Handlers[i].ContextKey); v != nil {
-			return o.Handlers[i].Save(ctx, res, req)
+			return o.Handlers[i].SetSessionCookie(ctx, res, req)
 		}
 		continue
 	}
@@ -671,17 +698,17 @@ func (o Grouped) Load(ctx context.Context, res http.ResponseWriter, req *http.Re
 	return ctx, nil
 }
 
-// Save will update and keep the session data in the per-request context store.
+// SetSessionCookie will update and keep the session data in the per-request context store.
 // It needs to be called to apply session data changes.
 // These changes entail a modification in the value of the  relevant session cookie.
 // Not safe for concurrent use by multiple goroutines.
-func (o Grouped) Save(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
+func (o Grouped) SetSessionCookie(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
 	if o.Handlers == nil {
 		return ctx, nil
 	}
 	for k, v := range o.Handlers {
 		if ctx.Value(k) != nil {
-			return v.Save(ctx, res, req)
+			return v.SetSessionCookie(ctx, res, req)
 		}
 		return ctx, nil
 	}
@@ -735,14 +762,18 @@ func ComputeHmac256(message, secret []byte) string {
 	return base64.StdEncoding.EncodeToString(h.Sum(nil))
 }
 
-// VerifySignature checks the integrity of the metadata whose MAC was computed.
+// VerifySignature checks the integrity of the base64 encoded data whose MAC of its base64 decoding was computed.
 func VerifySignature(messageb64, messageMAC, secret string) (bool, error) {
 	message, err := base64.StdEncoding.DecodeString(messageb64)
+	if err != nil {
+		return false, err
+	}
+	mMAC, err := base64.StdEncoding.DecodeString(messageMAC)
 	if err != nil {
 		return false, err
 	}
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write(message)
 	expectedMAC := mac.Sum(nil)
-	return hmac.Equal([]byte(messageMAC), expectedMAC), nil
+	return hmac.Equal([]byte(mMAC), expectedMAC), nil
 }

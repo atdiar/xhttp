@@ -259,6 +259,11 @@ func (m *Multiplexer) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *h
 	return
 }
 
+func (m *Multiplexer) Link(h xhttp.Handler) xhttp.HandlerLinker {
+	m.next = h
+	return m
+}
+
 // Forwarder returns a http request handler which invokes a proxy request in order
 // fetch the destination resource.
 func Forwarder(l Link) xhttp.Handler {

@@ -1,20 +1,23 @@
 package session
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/atdiar/errcode"
 	"github.com/atdiar/errors"
 	"github.com/atdiar/flag"
 )
 
-// CookieValue defines the structure of the data stored in cookie bqsed sessions.
+// CookieValue defines the structure of the data stored in cookie based sessions.
 type CookieValue struct {
 	Value  string     `json:"V"`
-	Expiry *time.Time `json:"T,omitempty"`
+	Expiry *time.Time `json:"X,omitempty"`
 }
 
 // NewCookieValue formats a new value ready for storage in the session cookie.
@@ -70,9 +73,9 @@ func AddTimeLimit(t time.Time) func(CookieValue) CookieValue {
 // Cookie defines the structure of a cookie based session object that can be
 // used to persist session data between a client and the server.
 type Cookie struct {
-	Config     *http.Cookie
+	HttpCookie *http.Cookie
 	Data       map[string]CookieValue
-	UpdateFlag *flag.Flag
+	ApplyMods  *flag.Flag
 
 	Secret string
 	// the delimiter should be sendable via cookie.
@@ -82,7 +85,7 @@ type Cookie struct {
 }
 
 // NewCookie creates a new cookie based session object.
-func NewCookie(name string, secret string, maxage int, id string, options ...func(Cookie) Cookie) Cookie {
+func NewCookie(name string, secret string, maxage int, options ...func(Cookie) Cookie) Cookie {
 	if name == "" {
 		panic("Session cookie name cannpt be the empty string.")
 	}
@@ -92,16 +95,16 @@ func NewCookie(name string, secret string, maxage int, id string, options ...fun
 	}
 
 	s := Cookie{
-		Config:     &http.Cookie{},
+		HttpCookie: &http.Cookie{},
 		Data:       make(map[string]CookieValue),
-		UpdateFlag: &flag.Flag{},
+		ApplyMods:  &flag.Flag{},
 		Secret:     secret,
-		Delimiter:  "::",
+		Delimiter:  ":",
 	}
-	s.Config.Name = name
-	s.Config.MaxAge = maxage
-	s.SetID(id)
-	s = DefaultCookieValues(s)
+	s.HttpCookie.Name = name
+	s.HttpCookie.MaxAge = maxage
+
+	s = DefaultCookieConfig(s)
 
 	if options != nil {
 		for _, opt := range options {
@@ -112,40 +115,44 @@ func NewCookie(name string, secret string, maxage int, id string, options ...fun
 	if !ok {
 		panic("ERR: id is a reserved key for the storage of the session id. Do not erase it.")
 	}
-	s.UpdateFlag.Set(true)
+	s.ApplyMods.Set(true)
 	return s
 }
 
-// DefaultCookieValues is used to configure a session Cookie underlying
+// DefaultCookieConfig is used to configure a session Cookie underlying
 // http.Cookie with sane default values.
 // The cookie parameters are set to ;
 // * HttpOnly: true
 // * Path:"/"
 // * Secure: true
-func DefaultCookieValues(s Cookie) Cookie {
-	s.Config.HttpOnly = true
-	s.Config.Secure = true
-	s.Config.Path = "/"
+func DefaultCookieConfig(s Cookie) Cookie {
+	s.HttpCookie.HttpOnly = true
+	s.HttpCookie.Secure = true
+	s.HttpCookie.Path = "/"
 	return s
 }
 
 // ID returns the session id if it has not expired.
 func (c Cookie) ID() (string, bool) {
-	return c.Data["id"].tryRetrieve()
+	return c.Data["id"].Value, true
 }
 
 // SetID is a setter for the session id in the cookie based session.
 func (c Cookie) SetID(id string) {
 	c.Data["id"] = NewCookieValue(id, 0)
-	c.UpdateFlag.Set(true)
+	c.ApplyMods.Set(true)
 }
 
 // Get retrieves the value stored in the cookie session corresponding to the
 // given key, if it exists/has not expired.
 func (c Cookie) Get(key string) (string, bool) {
-	if c.Data[key].Expired() {
+	cval, ok := c.Data[key]
+	if !ok {
+		return "", false
+	}
+	if cval.Expired() {
 		delete(c.Data, key)
-		c.UpdateFlag.Set(true)
+		c.ApplyMods.Set(true)
 		return "", false
 	}
 	return c.Data[key].tryRetrieve()
@@ -159,17 +166,17 @@ func (c Cookie) Set(key string, val string, maxage time.Duration) {
 	}
 	switch {
 	case maxage > 0:
-		c.Data[key] = NewCookieValue(val, time.Duration(c.Config.MaxAge), AddTimeLimit(time.Now().UTC().Add(maxage)))
-		c.UpdateFlag.Set(true)
+		c.Data[key] = NewCookieValue(val, time.Duration(c.HttpCookie.MaxAge), AddTimeLimit(time.Now().UTC().Add(maxage)))
+		c.ApplyMods.Set(true)
 		return
 	case maxage == 0:
 		c.Data[key] = NewCookieValue(val, 0)
-		c.UpdateFlag.Set(true)
+		c.ApplyMods.Set(true)
 		return
 	case maxage < 0:
 		if _, ok := c.Data[key]; ok {
 			delete(c.Data, key)
-			c.UpdateFlag.Set(true)
+			c.ApplyMods.Set(true)
 			return
 		}
 	}
@@ -179,16 +186,27 @@ func (c Cookie) Set(key string, val string, maxage time.Duration) {
 // if it exsts.
 func (c Cookie) Delete(key string) {
 	delete(c.Data, key)
-	c.UpdateFlag.Set(true)
+	c.ApplyMods.Set(true)
+}
+
+// Erase deletes the session cookies sharing the session name
+func (c Cookie) Erase(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	cookieslice := r.Cookies()
+	for _, cookie := range cookieslice {
+		if cookie.Name == c.HttpCookie.Name {
+			cookie.MaxAge = -1
+			http.SetCookie(w, cookie)
+		}
+	}
 }
 
 // Expire will allow to send a signal to the client browser to delete the
 // session cookie as the session is now expired.
 // At the next request, the client may be issued a new session id.
 func (c Cookie) Expire() {
-	c.Data["id"] = NewCookieValue("", time.Duration(c.Config.MaxAge), AddTimeLimit(time.Now()))
-	c.Config.MaxAge = -1
-	c.UpdateFlag.Set(true)
+	c.Data["id"] = NewCookieValue("", time.Duration(c.HttpCookie.MaxAge), AddTimeLimit(time.Now()))
+	c.HttpCookie.MaxAge = -1
+	c.ApplyMods.Set(true)
 }
 
 // Touch sets a new maxage for the session cookie and updates the expiry date of
@@ -197,7 +215,7 @@ func (c Cookie) Expire() {
 // cookie maxage value.
 // If several maxage values are provided, only the lqst one will come in effect.
 func (c Cookie) Touch(maxages ...int) {
-	maxage := c.Config.MaxAge
+	maxage := c.HttpCookie.MaxAge
 	if maxages != nil {
 		maxage = maxages[len(maxages)-1]
 	}
@@ -207,7 +225,7 @@ func (c Cookie) Touch(maxages ...int) {
 	}
 
 	if maxage == 0 {
-		c.Config.MaxAge = maxage
+		c.HttpCookie.MaxAge = maxage
 		for k, v := range c.Data {
 			if v.Expired() {
 				delete(c.Data, k)
@@ -215,11 +233,11 @@ func (c Cookie) Touch(maxages ...int) {
 			}
 			v.Expiry = nil
 		}
-		c.UpdateFlag.Set(true)
+		c.ApplyMods.Set(true)
 		return
 	}
 
-	c.Config.MaxAge = maxage
+	c.HttpCookie.MaxAge = maxage
 	n := time.Now().UTC().Add(time.Duration(maxage))
 	for k, v := range c.Data {
 		if v.Expired() {
@@ -228,7 +246,7 @@ func (c Cookie) Touch(maxages ...int) {
 		}
 		v.Expiry = &n
 	}
-	c.UpdateFlag.Set(true)
+	c.ApplyMods.Set(true)
 }
 
 // Encode will return a session cookie holding the json serialized session data.
@@ -241,33 +259,39 @@ func (c Cookie) Encode() (http.Cookie, error) {
 	if len(v) > 4000 {
 		return http.Cookie{}, errors.New("ERR: JSON encoded value too big for cookie. Max 4000 bytes")
 	}
-	c.Config.Value = v
-	c.UpdateFlag.Set(false)
-	return *(c.Config), nil
+	c.HttpCookie.Value = v
+	c.ApplyMods.Set(true)
+	return *(c.HttpCookie), nil
 }
 
 // Decode is used to deserialize the session cookie in order to make the stored
 // session data accessible.
 // If we detect that the client has tampered with the session cookie somehow,
 // an error is returned.
-func (c Cookie) Decode(http.Cookie) error {
+func (c Cookie) Decode(h http.Cookie) error {
 	// let's split the two components on the string-marshalled metadata (raw + Encoded)
-	s := strings.Split(c.Secret, c.Delimiter)
+	s := strings.Split(h.Value, c.Delimiter)
 	if len(s) <= 1 || len(s) > 4000 {
 		return ErrBadCookie.Wraps(errors.New("Cookie seems to have been tampered with. Size too large"))
 	}
-
-	ok, err := VerifySignature(s[1], s[0], c.Secret)
+	b64Message := s[1]
+	b64MAC := s[0]
+	ok, err := VerifySignature(b64Message, b64MAC, c.Secret)
 	if !ok {
-		return ErrBadCookie.Wraps(err)
+		e := errors.New("Signature verification failure of session cookie")
+		if err != nil {
+			return e.Wraps(err)
+		}
+		return e
 	}
-	str, err := base64.StdEncoding.DecodeString(s[1])
+	str, err := base64.StdEncoding.DecodeString(b64Message)
 	if err != nil {
-		return ErrBadCookie.Wraps(err)
+		log.Print("Decoding error")
+		return errors.New("Decoding failure").Wraps(err).Code(errcode.BadCookie)
 	}
 	err = json.Unmarshal(str, &(c.Data))
 	if err != nil {
-		return ErrBadCookie.Wraps(err)
+		return errors.New("Unmarshalling failure of session value").Wraps(err).Code(errcode.BadCookie)
 	}
 	return nil
 }

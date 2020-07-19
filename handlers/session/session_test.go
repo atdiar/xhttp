@@ -1,15 +1,14 @@
 package session
 
 import (
+	"bytes"
 	"context"
+	//"log"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
-	"strings"
 	"testing"
 	"time"
 
-	"github.com/atdiar/localmemstore"
 	"github.com/atdiar/xhttp"
 )
 
@@ -19,12 +18,12 @@ const (
 	GSID           = "GSID"
 )
 
-func Multiplexer(t *testing.T) xhttp.ServeMux {
+func Multiplexer(t *testing.T) (xhttp.ServeMux, Handler) {
 
 	r := xhttp.NewServeMux()
 
-	s := New(GSID, "secret", SetStore(localmemstore.New())) // ("thiusedfrtgju8975bj", testcache.TestStore())
-	s.Cookie.Config.MaxAge = 86400
+	s := New(GSID, "secret")
+	s.Cookie.HttpCookie.MaxAge = 8640000
 	r.USE(s)
 
 	r.GET("/", xhttp.HandlerFunc(func(ctx context.Context, res http.ResponseWriter, req *http.Request) {
@@ -34,29 +33,26 @@ func Multiplexer(t *testing.T) xhttp.ServeMux {
 	r.POST("/", xhttp.HandlerFunc(func(ctx context.Context, res http.ResponseWriter, req *http.Request) {
 		_, ok := ctx.Value(s.ContextKey).(http.Cookie)
 		if !ok {
-			//http.Error(res, ErrBadSession.Error(), 501)
-			t.Error("The session was not correctly setup")
+			t.Error("The session was not loaded")
 		}
 
-		/*	_, err := s.Load(ctx, res, req)
-			if err != nil {
-				t.Error(err)
-			}*/
 		id, ok := s.Cookie.ID()
 		if !ok {
 			//http.Error(res, ErrNoID.Error(), 501)
-			t.Errorf("Expected an id of %v but it is %v as we're getting %v \n Cookie maxage is %v ", fakeSessionID, ok, id, s.Cookie.Config.MaxAge)
+			t.Errorf("Expected an id of %v but it is %v as we're getting %v \n Cookie maxage is %v ", fakeSessionID, ok, id, s.Cookie.HttpCookie.MaxAge)
 		}
-		res.Write([]byte(id))
 
+		s.Put("test", []byte("test"), 86400*time.Minute)
+		s.SetSessionCookie(ctx, res, req)
+
+		res.Write([]byte(id))
 	}))
 
-	return r
+	return r, s
 }
 
 func TestSession(t *testing.T) {
-	r := Multiplexer(t)
-	t.Log(r)
+	r, sess := Multiplexer(t)
 
 	// Initial request
 	req1, err := http.NewRequest("GET", "http://example.com/foo", nil)
@@ -71,10 +67,10 @@ func TestSession(t *testing.T) {
 	// There was no session cookie sent with the request since it is the
 	// initial one. However we expect a response that includes one, since
 	// a session should have been generated.
-	//s := RetrieveCookie(w.Header(), "GSID")
 	var s *http.Cookie
 	wcookie := w.Result().Cookies()
-	if wcookie == nil {
+
+	if len(wcookie) == 0 {
 		t.Fatal("No cookie has been set, including session coookie.")
 	}
 	for _, c := range wcookie {
@@ -90,8 +86,8 @@ func TestSession(t *testing.T) {
 	if s.Name != "GSID" || s.Path != "/" || s.HttpOnly != true || s.Secure != true {
 		t.Errorf("The session cookie does not seem to have been set correctly. Got %v", s)
 	}
-	if s.MaxAge != 86400 {
-		t.Errorf("Session Cookie was uncorrectly set. Got %v and wanted %v", s.MaxAge, 86400)
+	if s.MaxAge != 8640000 {
+		t.Errorf("Session Cookie was uncorrectly set. Got %v and wanted %v", s.MaxAge, 8640000)
 	}
 
 	// Second request
@@ -102,30 +98,32 @@ func TestSession(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
+	// let's add the request cookie, created out of the previous response to req1
+	req2.AddCookie(s)
 
+	w = httptest.NewRecorder()
 	r.ServeHTTP(w, req2)
 	str := w.Body.String()
 
-	// The session cookie should not change.
-	wcookie = w.Result().Cookies()
-	if wcookie == nil {
-		t.Fatal("No cookie has been set, including session coookie.")
-	}
-	for _, c := range wcookie {
-		if c.Name == GSID {
-			s = c
-			break
-		}
+	// The session cookie should not be set in the response as the session hasn't changed.
+	scookie := w.Result().Cookies()[0]
+	if scookie.Name != GSID {
+		t.Fatal("Some additional cookie with a name I don't know has been set?!")
 	}
 
-	if s == nil {
-		t.Error("The session cookie does not seem to have been set.")
+	err = sess.Cookie.Decode(*scookie)
+	if err != nil {
+		t.Error(err)
 	}
-	if s.Name != "GSID" || s.Path != "/" || s.HttpOnly != true || s.Secure != true {
-		t.Error("The session cookie does not seem to have been set correctly.")
+
+	bstr, err := sess.Get("test")
+
+	if err != nil {
+		t.Fatal("unable to retrieve new item put in the session cookie under the key <<test>>", err)
 	}
-	if s.MaxAge != 86400 {
-		t.Error("Session Cookie was uncorrectly set.")
+
+	if bytes.Compare(bstr, []byte("test")) != 0 {
+		t.Fatalf("Was expecting %s but got %s", "test", string(bstr))
 	}
 
 	// Third request
@@ -139,16 +137,18 @@ func TestSession(t *testing.T) {
 		Path:   "/",
 		Secure: true,
 		MaxAge: 0,
-		Value:  "hjfhfhdfh:gjfjghfgjh",
+		Value:  "kdL7gHOcaXV22jM0ltklYPV2EWeEImgH/nwqYTwtuGo=:eyJzb21lIHZhbHVlIjp7IlYiOiJIZWxsbywgV29ybGQiLCJUIjoiMjAwOS0xMS0xMFQyMzowMDowMFoifX0=",
 	})
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, req3)
 
 	var ns *http.Cookie
 	wcookie = w.Result().Cookies()
-	if wcookie == nil {
+
+	if len(wcookie) == 0 {
 		t.Fatal("No cookie has been set, including session coookie.")
 	}
+
 	for _, c := range wcookie {
 		if c.Name == GSID {
 			ns = c
@@ -159,9 +159,9 @@ func TestSession(t *testing.T) {
 		t.Error("The session cookie does not seem to have been set.")
 	}
 	if ns.Name != "GSID" || ns.Path != "/" || ns.HttpOnly != true || ns.Secure != true {
-		t.Error("The session cookie does not seem to have been set correctly.")
+		t.Errorf("The session cookie does not seem to have been set correctly.`\n` Expected: `\n` %v but got: `\n` %v", wcookie, ns)
 	}
-	if ns.MaxAge != 86400 {
+	if ns.MaxAge != 8640000 {
 		t.Error("Session Cookie was uncorrectly set.")
 	}
 	if ns.Value == s.Value {
@@ -170,214 +170,10 @@ func TestSession(t *testing.T) {
 	if body := w.Body.String(); body == str {
 		t.Errorf("Expected different values but got the same id: %v vs %v", body, str)
 	}
+
 }
 
 func TestSessionInterface(t *testing.T) {
 	s := New(GSID, "secret")
-	_ = Interface(s)
-}
-
-// #############################################################################
-// The below is extracted from Go's standard library and is used simply to
-// retrieve a cookie that has been set in a http.Header.
-//
-// Copyright 2009 The Go Authors. All rights reserved.
-// Use of this source code is governed by a BSD-style
-// license that can be found in the LICENSE file.
-// #############################################################################
-func RetrieveCookie(h http.Header, Name string) *http.Cookie {
-	cookie := &http.Cookie{}
-	for _, line := range h["Set-Cookie"] {
-		parts := strings.Split(strings.TrimSpace(line), ";")
-		if len(parts) == 1 && parts[0] == "" {
-			continue
-		}
-		parts[0] = strings.TrimSpace(parts[0])
-		j := strings.Index(parts[0], "=")
-		if j < 0 {
-			continue
-		}
-		name, value := parts[0][:j], parts[0][j+1:]
-		if !isCookieNameValid(name) && name != Name {
-			continue
-		}
-		value, success := parseCookieValue(value, true)
-		if !success {
-			continue
-		}
-		c := &http.Cookie{
-			Name:  name,
-			Value: value,
-			Raw:   line,
-		}
-		for i := 1; i < len(parts); i++ {
-			parts[i] = strings.TrimSpace(parts[i])
-			if len(parts[i]) == 0 {
-				continue
-			}
-
-			attr, val := parts[i], ""
-			if j := strings.Index(attr, "="); j >= 0 {
-				attr, val = attr[:j], attr[j+1:]
-			}
-			lowerAttr := strings.ToLower(attr)
-			val, success = parseCookieValue(val, false)
-			if !success {
-				c.Unparsed = append(c.Unparsed, parts[i])
-				continue
-			}
-			switch lowerAttr {
-			case "secure":
-				c.Secure = true
-				continue
-			case "httponly":
-				c.HttpOnly = true
-				continue
-			case "domain":
-				c.Domain = val
-				continue
-			case "max-age":
-				secs, err := strconv.Atoi(val)
-				if err != nil || secs != 0 && val[0] == '0' {
-					break
-				}
-				if secs <= 0 {
-					c.MaxAge = -1
-				} else {
-					c.MaxAge = secs
-				}
-				continue
-			case "expires":
-				c.RawExpires = val
-				exptime, err := time.Parse(time.RFC1123, val)
-				if err != nil {
-					exptime, err = time.Parse("Mon, 02-Jan-2006 15:04:05 MST", val)
-					if err != nil {
-						c.Expires = time.Time{}
-						break
-					}
-				}
-				c.Expires = exptime.UTC()
-				continue
-			case "path":
-				c.Path = val
-				continue
-			}
-			c.Unparsed = append(c.Unparsed, parts[i])
-		}
-		cookie = c
-	}
-	return cookie
-}
-
-func parseCookieValue(raw string, allowDoubleQuote bool) (string, bool) {
-	// Strip the quotes, if present.
-	if allowDoubleQuote && len(raw) > 1 && raw[0] == '"' && raw[len(raw)-1] == '"' {
-		raw = raw[1 : len(raw)-1]
-	}
-	for i := 0; i < len(raw); i++ {
-		if !validCookieValueByte(raw[i]) {
-			return "", false
-		}
-	}
-	return raw, true
-}
-
-func isCookieNameValid(raw string) bool {
-	if raw == "" {
-		return false
-	}
-	return strings.IndexFunc(raw, isNotToken) < 0
-}
-
-func validCookieValueByte(b byte) bool {
-	return 0x20 <= b && b < 0x7f && b != '"' && b != ';' && b != '\\'
-}
-
-func isNotToken(r rune) bool {
-	return !isToken(r)
-}
-func isToken(r rune) bool {
-	i := int(r)
-	return i < len(isTokenTable) && isTokenTable[i]
-}
-
-var isTokenTable = [127]bool{
-	'!':  true,
-	'#':  true,
-	'$':  true,
-	'%':  true,
-	'&':  true,
-	'\'': true,
-	'*':  true,
-	'+':  true,
-	'-':  true,
-	'.':  true,
-	'0':  true,
-	'1':  true,
-	'2':  true,
-	'3':  true,
-	'4':  true,
-	'5':  true,
-	'6':  true,
-	'7':  true,
-	'8':  true,
-	'9':  true,
-	'A':  true,
-	'B':  true,
-	'C':  true,
-	'D':  true,
-	'E':  true,
-	'F':  true,
-	'G':  true,
-	'H':  true,
-	'I':  true,
-	'J':  true,
-	'K':  true,
-	'L':  true,
-	'M':  true,
-	'N':  true,
-	'O':  true,
-	'P':  true,
-	'Q':  true,
-	'R':  true,
-	'S':  true,
-	'T':  true,
-	'U':  true,
-	'W':  true,
-	'V':  true,
-	'X':  true,
-	'Y':  true,
-	'Z':  true,
-	'^':  true,
-	'_':  true,
-	'`':  true,
-	'a':  true,
-	'b':  true,
-	'c':  true,
-	'd':  true,
-	'e':  true,
-	'f':  true,
-	'g':  true,
-	'h':  true,
-	'i':  true,
-	'j':  true,
-	'k':  true,
-	'l':  true,
-	'm':  true,
-	'n':  true,
-	'o':  true,
-	'p':  true,
-	'q':  true,
-	'r':  true,
-	's':  true,
-	't':  true,
-	'u':  true,
-	'v':  true,
-	'w':  true,
-	'x':  true,
-	'y':  true,
-	'z':  true,
-	'|':  true,
-	'~':  true,
+	_ = Interface(&s)
 }

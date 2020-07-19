@@ -55,7 +55,7 @@ func CreateMuxes(t *testing.T) (xhttp.ServeMux, *Multiplexer) {
 		})
 	}
 
-	dynamux, err := NewMultiplexer(strconv.Itoa(rand.Int()), sess, TestForwarder)
+	dynamux, err := NewMultiplexer(strconv.Itoa(rand.Int()), &sess, TestForwarder)
 	if err != nil {
 		t.Fatal(err)
 	}

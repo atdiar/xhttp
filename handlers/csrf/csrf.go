@@ -45,7 +45,7 @@ func NewHandler(name string, secret string, options ...func(Handler) Handler) Ha
 
 	h.Header = "X-CSRF-TOKEN"
 
-	h.Session.Cookie.Config.HttpOnly = false
+	h.Session.Cookie.HttpCookie.HttpOnly = false
 	if options != nil {
 		for _, opt := range options {
 			h = opt(h)
@@ -75,7 +75,7 @@ func (h Handler) generateToken(ctx context.Context, res http.ResponseWriter, req
 		http.Error(res, "Storing new CSRF Token in session failed", 503)
 		return ctx, err
 	}
-	return h.Session.Save(ctx, res, req)
+	return h.Session.SetSessionCookie(ctx, res, req)
 }
 
 // CtxToken returns the encoded session value of a csrf token.
