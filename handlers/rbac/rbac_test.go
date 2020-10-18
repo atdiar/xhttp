@@ -58,6 +58,9 @@ func saveRoleInDB(r Role) error {
 // AssignRoleToUserFn is an example of a afunction used to grant user roles.
 // Here, a user is idenetified by its session id.
 // The session storage is used to hold the list of roles a user has been assigned.
+//
+// NOTE: this is not an example for use in production as one would typically save
+// the roles in a database instead.
 func AssignRoleToUserFn(s session.Handler) func(context.Context, http.ResponseWriter, *http.Request, Role) (context.Context, error) {
 	return func(ctx context.Context, w http.ResponseWriter, req *http.Request, r Role) (context.Context, error) {
 		err := saveRoleInDB(r)
@@ -97,6 +100,9 @@ func AssignRoleToUserFn(s session.Handler) func(context.Context, http.ResponseWr
 
 // note: no need to check role expiry here since it is encoded in the way the role
 // is being saved as a session object.
+//
+// NOTE: again, not for production use as one would typically check the roles
+// against a database and not a session store.
 func AssertUserHasRoleFn(s session.Handler) func(context.Context, http.ResponseWriter, *http.Request, Role) (context.Context, error) {
 	return func(ctx context.Context, w http.ResponseWriter, req *http.Request, r Role) (context.Context, error) {
 		// first, we try to retrieve the session

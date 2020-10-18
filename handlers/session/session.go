@@ -39,7 +39,7 @@ var (
 	ErrNoSession = errors.New("No session").Code(errcode.NoSession)
 )
 
-// todo mitigate session fixation
+// todo deal with sessions that should not be regen on failure to load
 
 type contextKey struct{}
 
@@ -74,6 +74,8 @@ type Store interface {
 // Interface defines a common interface for objects that are used for session
 // management.
 type Interface interface {
+	ID() (string, error)
+	SetID(string)
 	Get(string) ([]byte, error)
 	Put(key string, value []byte, maxage time.Duration) error
 	Delete(key string) error
@@ -191,6 +193,21 @@ func FixedUUID(id string) func(Handler) Handler {
 // *****************************************************************************
 // Session handler UI
 // *****************************************************************************
+
+// ID will return the session ID if it has not expired. Otherwise it return an error.
+func (h Handler) ID() (string, error) {
+	id, ok := h.Cookie.ID()
+	if !ok {
+		return "", ErrNoID
+	}
+	return id, nil
+}
+
+// SetID will sett a new id for a session.
+func (h Handler) SetID(id string) {
+	h.Cookie.SetID(id)
+	h.Cookie.ApplyMods.Set(true)
+}
 
 // Get will retrieve the value corresponding to a given store key from
 // the session store.
@@ -471,11 +488,33 @@ func (h Handler) Link(hn xhttp.Handler) xhttp.HandlerLinker {
 	return h
 }
 
-// Ordered groups sessions by increasing priority order. It is useful When
-// a user has several sessions still valid (unsigned, signed, admin etc) with
-// different settings.
+// Enforce return a handler whose purpose is tom make sure that the sessions are
+// present before continuing with request handling.
+func Enforcer(sessions ...Handler) xhttp.HandlerLinker {
+	return xhttp.LinkableHandler(xhttp.HandlerFunc(func(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+		c := ctx
+		var err error
+		if len(sessions) != 0 {
+			for _, s := range sessions {
+				c, err = s.Load(c, w, r)
+				if err != nil {
+					http.Error(w, "Some session credentials are missing", http.StatusUnauthorized)
+					return
+				}
+				continue
+			}
+		}
+		r.WithContext(c)
+	}))
+}
+
+// todo EnforceHighest
+
+// Ordered groups sessions by decreasing priority order (index 0 is the highest priority).
+// It is useful Wwen a user has several sessions still valid (unsigned, signed, admin etc)
+// with different settings.
 // For example, on authentication and user signing, we can switch from using an
-// unsigned user session handler to the one for signed-in user.
+// unsigned user session handler to the session handler for signed-in user.
 // Typically, these sessions are not mutually exclusive meaning that using one
 // session does not expire the other ones.
 type Ordered struct {
@@ -483,9 +522,9 @@ type Ordered struct {
 	next     xhttp.Handler
 }
 
-// SelectHighest returns a session management http request handler with sessions
-// inserted from lowest priority to highest.
-func SelectHighest(sessions ...Handler) Ordered {
+// SelectHighestPriority returns a session management http request handler with sessions
+// inserted from highest priority (index 0) to lowest.
+func SelectHighestPriority(sessions ...Handler) Ordered {
 	return Ordered{sessions, nil}
 }
 
@@ -552,39 +591,10 @@ func (o Ordered) Load(ctx context.Context, res http.ResponseWriter, req *http.Re
 		}
 		continue
 	}
-	return ctx, nil
+	return ctx, errors.New("No session to load")
 }
 
-// SetSessionCookie will update and keep the session data in the per-request context store.
-// It needs to be called to apply session data changes.
-// These changes entail a modification in the value of the  relevant session cookie.
-// Not safe for concurrent use by multiple goroutines.
-func (o Ordered) SetSessionCookie(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
-	if o.Handlers == nil {
-		return ctx, nil
-	}
-	for i := len(o.Handlers) - 1; i >= 0; i++ {
-		if v := ctx.Value(o.Handlers[i].ContextKey); v != nil {
-			return o.Handlers[i].SetSessionCookie(ctx, res, req)
-		}
-		continue
-	}
-	return ctx, nil
-}
-
-// Generate creates a completely new session corresponding to a given session ContextKey.
-func (o Ordered) Generate(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
-	if o.Handlers == nil {
-		return ctx, nil
-	}
-	for i := len(o.Handlers) - 1; i >= 0; i++ {
-		if v := ctx.Value(o.Handlers[i].ContextKey); v != nil {
-			return o.Handlers[i].Generate(ctx, res, req)
-		}
-		continue
-	}
-	return ctx, nil
-}
+// todo create a SetSessionCookie method for Ordered sessions
 
 // ServeHTTP effectively makes the session a xhttp request handler.
 func (o Ordered) ServeHTTP(ctx context.Context, res http.ResponseWriter, req *http.Request) {
@@ -595,11 +605,8 @@ func (o Ordered) ServeHTTP(ctx context.Context, res http.ResponseWriter, req *ht
 	c, err := o.Load(ctx, res, req)
 
 	if err != nil {
-		c, err = o.Generate(c, res, req)
-		if err != nil {
-			http.Error(res, "Unable to generate session", http.StatusInternalServerError)
-			return
-		}
+		http.Error(res, "Unable to load session", http.StatusInternalServerError)
+		return
 	}
 
 	if o.next != nil {

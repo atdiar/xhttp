@@ -3,7 +3,6 @@ package dynamux
 
 import (
 	"context"
-	"encoding/json"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -14,32 +13,35 @@ import (
 	"sync"
 	"time"
 
-	"github.com/atdiar/errcode"
-	"github.com/atdiar/errors"
 	"github.com/atdiar/xhttp"
-	"github.com/atdiar/xhttp/handlers/session"
 )
 
 type contextKey struct{}
 
 // Link defines the structure of a url generated at runtime which can collect
-// application stats. It is not used to track people across the internet.
+// application stats.
 // This is an indirection url which enables processing to be done before the
-// static resource is fetched. Typical use would be url creation for uploaded resources.
+// static resource is fetched or redirected to.
+// Typical use would be url creation for uploaded resources.
+// Persisting(storage, update, deletion) Links and retrieving them from the
+// udatabase are tasks left to the user of this library.
 type Link struct {
 	UID string
 
-	Path       string
-	RedirectTo *url.URL
-	Proxy      *httputil.ReverseProxy `json:"-"`
-	Client     *http.Client           `json:"-"`
-	Active     bool
-	// OwnerID string // whom the link was created on behalf of
-	// Referer *url.URL
+	Path        string
+	Destination *url.URL
+	Proxy       *httputil.ReverseProxy `json:"-"`
+	Client      *http.Client           `json:"-"`
+	Active      bool
+	// Owner string // whom the link was created on behalf of
+	// RessourceID string
+	// Referer string
 	//ClickerSessionID string
 	//ClickCount       int64
 	CreatedAt time.Time
 	MaxAge    time.Duration
+
+	Handler xhttp.Handler
 
 	contextKey *contextKey
 }
@@ -49,16 +51,64 @@ type Link struct {
 // such dynamically generated links.
 // maxage <0 means the link is expired
 // maxage = 0 means the link doesn not expire
-func NewLink(id string, path string, dest *url.URL, maxage time.Duration) Link {
-	if dest != nil {
-		return Link{id, path, dest, httputil.NewSingleHostReverseProxy(dest), &http.Client{}, true, time.Now().UTC(), maxage, new(contextKey)}
+func NewLink(id string, path string, dest *url.URL, maxage time.Duration, proxy bool) Link {
+	if proxy {
+		return Link{id, path, dest, httputil.NewSingleHostReverseProxy(dest), &http.Client{}, true, time.Now().UTC(), maxage, nil, new(contextKey)}
 	}
-	return Link{id, path, dest, nil, nil, true, time.Now().UTC(), maxage, new(contextKey)}
+	return Link{id, path, dest, nil, nil, true, time.Now().UTC(), maxage, nil, new(contextKey)}
+}
+
+// WithHandler provides the link with a middleware request handling function that
+// should trigger before any redirection or requets proxying for instance.
+// Can be used typically to record link statistics.
+func (l Link) WithHandler(h xhttp.Handler) Link {
+	l.Handler = h
+	return l
+}
+
+func (l Link) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	if !l.Active {
+		http.Error(w, "Error: Link is inactive", http.StatusNotFound)
+		return
+	}
+
+	if l.MaxAge < 0 {
+		http.Error(w, "Error: Link has expired", http.StatusNotFound)
+		return
+	}
+
+	if time.Now().UTC().Before(l.CreatedAt.Add(l.MaxAge)) {
+		http.Error(w, "Error: Link has expired", http.StatusNotFound)
+		return
+	}
+
+	if l.Handler != nil {
+		l.Handler.ServeHTTP(ctx, w, r)
+	}
+
+	if l.Proxy != nil {
+		// l.Client should have been set
+		forwarder := httptest.NewServer(l.Proxy)
+		res, err := l.Client.Get(forwarder.URL)
+		if err != nil {
+			http.Error(w, "Could not fetch resource", http.StatusInternalServerError)
+			return
+		}
+		b, err := ioutil.ReadAll(res.Body)
+		if err != nil {
+			http.Error(w, "Could not read fetched response body", http.StatusInternalServerError)
+			return
+		}
+		w.Write(b)
+		return
+	}
+	http.Redirect(w, r, l.Destination.String(), http.StatusTemporaryRedirect)
 }
 
 /* The way it should work:
 1. Link is generated (an ID for the link is created and the link itself is  probably
-a hash based version (salt+pepper)
+a hash based version (salt+pepper){
+}
 2.The link is inserted in the Multiplexer object
 3. On request, the Multiplexer calls its request handler ( for instance to record
 statistics such as number of clicks) and then redirects via the
@@ -68,135 +118,26 @@ destination url.
 
 // Multiplexer is used to handle dynamically generated URLs.
 type Multiplexer struct {
-	mu         *sync.RWMutex
-	SessionKey string
+	mu *sync.RWMutex
 
 	Links map[string]Link
-
-	Session session.Interface
-
-	Handler func(Link) xhttp.Handler
-	next    xhttp.Handler
 }
 
 // NewMultiplexer creates a new dynamic link handler for serving requests to these
 // runtime generated links.
-func NewMultiplexer(sessionKey string, s session.Interface, LinkHandler func(Link) xhttp.Handler) (*Multiplexer, error) {
-	m := &Multiplexer{new(sync.RWMutex), sessionKey, make(map[string]Link), s, LinkHandler, nil}
-	return m, m.upload()
+func NewMultiplexer() *Multiplexer {
+	m := &Multiplexer{new(sync.RWMutex), make(map[string]Link)}
+	return m
 }
 
 // AddLink inserts a new Link into the Multiplexer.
-func (m *Multiplexer) AddLink(links ...Link) error {
+func (m *Multiplexer) AddLink(links ...Link) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	err := m.download()
-	if err != nil {
-		return err
-	}
 	for _, lnk := range links {
 		m.Links[lnk.Path] = lnk
 	}
-	return m.upload()
-}
-
-// download makes available for usage the links that have been persisted away.
-func (m *Multiplexer) download() error {
-
-	Links, err := m.Session.Get(m.SessionKey)
-	if err != nil {
-		if errors.As(err).Is(errcode.NoID) {
-			return m.upload()
-		}
-		return errors.New("Could not download links from session. \n" + err.Error())
-	}
-	return json.Unmarshal(Links, &(m.Links))
-}
-
-// upload brings back the changes to the persistence layer
-func (m *Multiplexer) upload() error {
-
-	b, err := json.Marshal(m.Links)
-	if err != nil {
-		return err
-	}
-	return m.Session.Put(m.SessionKey, b, 0)
-}
-
-// ActivateLink activates the http request handling for a link.
-func (m *Multiplexer) ActivateLink(path string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	err := m.download()
-	if err != nil {
-		return err
-	}
-
-	link, ok := m.Links[path]
-	if !ok {
-		return errors.New("TRLINKS: no link found for this url")
-	}
-	link.Active = true
-	m.Links[path] = link
-
-	err = m.upload()
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// DeactivateLink deactivates the http request handling for a given link.
-func (m *Multiplexer) DeactivateLink(path string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	err := m.download()
-	if err != nil {
-		return err
-	}
-
-	link, ok := m.Links[path]
-	if !ok {
-		return errors.New("TRLINKS: no link found for this url")
-	}
-	link.Active = false
-	m.Links[path] = link
-
-	err = m.upload()
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-// ExpireLink does as its name suggests.
-func (m *Multiplexer) ExpireLink(path string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	err := m.download()
-	if err != nil {
-		return err
-	}
-
-	link, ok := m.Links[path]
-	if !ok {
-		return errors.New("TRLINKS: no link found for this url")
-	}
-	link.MaxAge = -1
-	m.Links[path] = link
-
-	err = m.upload()
-	if err != nil {
-		return err
-	}
-
-	return nil
 }
 
 func pathExists(url *url.URL, m *Multiplexer) (bool, string) {
@@ -221,73 +162,12 @@ func pathExists(url *url.URL, m *Multiplexer) (bool, string) {
 }
 
 func (m *Multiplexer) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
-
-	err := m.download()
-	if err != nil {
-		http.Error(w, "Error: Could not find the links \n"+err.Error(), http.StatusInternalServerError)
-		return
-	}
 	ok, dao := pathExists(r.URL, m)
 	v, ok := m.Links[dao]
 	if !ok {
 		log.Print(dao, v)
-		http.Error(w, "Error: Link broken or missing", http.StatusInternalServerError)
+		http.NotFound(w, r)
 		return
 	}
-	if !v.Active {
-		http.Error(w, "Error: Link is inactive", http.StatusInternalServerError)
-		return
-	}
-
-	if v.MaxAge < 0 {
-		http.Error(w, "Error: Link has expired", http.StatusInternalServerError)
-		return
-	}
-
-	if time.Now().UTC().Before(v.CreatedAt.Add(v.MaxAge)) {
-		http.Error(w, "Error: Link has expired", http.StatusInternalServerError)
-		return
-	}
-
-	if m.Handler != nil {
-		m.Handler(v).ServeHTTP(ctx, w, r)
-	}
-
-	if m.next != nil {
-		m.next.ServeHTTP(ctx, w, r)
-	}
-	return
+	v.ServeHTTP(ctx, w, r)
 }
-
-func (m *Multiplexer) Link(h xhttp.Handler) xhttp.HandlerLinker {
-	m.next = h
-	return m
-}
-
-// Forwarder returns a http request handler which invokes a proxy request in order
-// fetch the destination resource.
-func Forwarder(l Link) xhttp.Handler {
-	forwarder := httptest.NewServer(l.Proxy)
-	return xhttp.HandlerFunc(func(ctx context.Context, w http.ResponseWriter, r *http.Request) {
-		if l.RedirectTo != nil {
-			res, err := l.Client.Get(forwarder.URL)
-			if err != nil {
-				http.Error(w, "Could not fetch resource", http.StatusInternalServerError)
-				b, err := ioutil.ReadAll(res.Body)
-				if err != nil {
-					http.Error(w, "Could not read fetched response body", http.StatusInternalServerError)
-				}
-				w.Write(b)
-			}
-		}
-	})
-}
-
-/*
-The way the library is used, the linkHandler is created before the server starts
-and needs to be registered into the multiplexer
-The destination url link handlers will have been registered for the corresponding url scheme
-The indirect link handler is the same for all links registered in a single Multiplexer.
-So for differentiated handling, multiple linkHanfdler need to be instantiated,
-or the linkhandler should account for it in the ServeHTTP method code.
-*/

@@ -25,10 +25,36 @@ type HandlerLinker interface {
 }
 
 // HandlerFunc defines a type of functions implementing the Handler interface.
-type HandlerFunc func(context.Context, http.ResponseWriter, *http.Request)
+type HandlerFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request)
 
 func (f HandlerFunc) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	f(ctx, w, r)
+}
+
+type handlerlinker struct {
+	handler Handler
+	next    Handler
+}
+
+func (h handlerlinker) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	h.handler.ServeHTTP(ctx, w, r)
+
+	if h.next != nil {
+		h.next.ServeHTTP(r.Context(), w, r)
+	}
+}
+
+func (h handlerlinker) Link(ha Handler) HandlerLinker {
+	h.next = ha
+	return h
+}
+
+// LinkableHandler is a function that tunr an Handler into a HandlerLinker suitable for further chaining.
+// If the Handler happens to modify the context object, it should make sure to
+// swap the *http.Request internal context for the new updated context via the
+// WithContext method.
+func LinkableHandler(h Handler) HandlerLinker {
+	return handlerlinker{h, nil}
 }
 
 /*

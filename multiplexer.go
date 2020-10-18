@@ -32,7 +32,7 @@ func NewServeMux() ServeMux {
 	sm.Once = new(sync.Once)
 	sm.routeHandlerMap = make(map[string]httpVerbFunctions)
 	sm.initErr = nil
-
+	sm.catchAll = initcatchall{nil}
 	return sm
 }
 
@@ -290,7 +290,7 @@ func (sm *ServeMux) TRACE(pattern string, h Handler) {
 // This function should only be called once.
 func (sm *ServeMux) USE(handlers ...HandlerLinker) {
 	linkable := Chain(handlers...)
-	if sm.catchAll != nil {
+	if _, ok := sm.catchAll.(initcatchall); !ok {
 		sm.initErr = append(sm.initErr, error(errors.New("USE has already been called once.\n")))
 	} else {
 		sm.catchAll = linkable
@@ -386,4 +386,21 @@ func patternMatch(url *url.URL, pattern string, vars map[string]string) bool {
 // This function should be used on a path registered in the muxer as /track/
 func PathMatch(req *http.Request, pattern string, vars map[string]string) bool {
 	return patternMatch(req.URL, pattern, vars)
+}
+
+type initcatchall struct {
+	next Handler
+}
+
+func (i initcatchall) Link(h Handler) HandlerLinker {
+	i.next = h
+	return i
+}
+
+func (i initcatchall) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	if i.next != nil {
+		i.next.ServeHTTP(ctx, w, r)
+		return
+	}
+	http.Error(w, http.StatusText(405), 405)
 }

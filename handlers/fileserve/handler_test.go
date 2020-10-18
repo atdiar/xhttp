@@ -1,4 +1,4 @@
-package file
+package fileserve
 
 import (
 	"net/http"
@@ -28,7 +28,7 @@ func TestFileserving(t *testing.T) {
 	}
 
 	// Create fileserving request handler
-	fsh := NewServer(tmpfile.Name())
+	fsh := New(tmpfile.Name())
 
 	// Implement fileserving logic on get requests
 	mux := xhttp.NewServeMux()

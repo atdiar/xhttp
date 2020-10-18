@@ -88,7 +88,6 @@ func TestCompressHandler(t *testing.T) {
 	// Response recording
 	w = httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
-	t.Log(w.Header())
 
 	// Testing that the response is correctly sent.
 	if enc := w.HeaderMap.Get("Content-Encoding"); enc != "" {

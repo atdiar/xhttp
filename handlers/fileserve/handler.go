@@ -1,5 +1,5 @@
-// Package file enables the serving of a static file or an entire directory.
-package file
+// Package fileserve enables the serving of a static file or an entire directory.
+package fileserve
 
 import (
 	"net/http"
@@ -19,7 +19,7 @@ type Server struct {
 
 // NewServer returns a http request handler in charge of serving the content of
 // a file or directory.
-func NewServer(path string) Server {
+func New(path string) Server {
 	return Server{
 		pathname: path,
 		next:     nil,

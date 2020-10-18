@@ -10,26 +10,13 @@ import (
 
 	"github.com/atdiar/xhttp"
 	"github.com/atdiar/xhttp/handlers/session"
-	"github.com/atdiar/xhttp/handlers/usersigning"
 	"golang.org/x/oauth2"
 )
 
 var (
-	// Signin is the parameter value used to start an Authentication session for
-	// user authentication.
-	Signin = func() AuthReason { return "signin" }()
-
-	// Signup is the parameter value used to start an Authentification session for
-	// user registration.
-	Signup = func() AuthReason { return "signup" }()
-
 	// TokenKey is the key under which an oAuth Token is stored in a context
 	TokenKey tokenkey
 )
-
-// AuthReason defines an option type used to declare whether the authorization
-// request is for user registration (signup) or user authentication (signin).
-type AuthReason string
 
 type tokenkey struct{}
 
@@ -39,7 +26,6 @@ type Authentifier struct {
 	*oauth2.Config
 	Options []oauth2.AuthCodeOption
 	Log     *log.Logger
-	whatfor AuthReason
 }
 
 // CallbackHandler defines a http request handler that will deal with the
@@ -48,20 +34,19 @@ type Authentifier struct {
 // (aka user signin) or user Registration (aka user signup).
 type CallbackHandler struct {
 	authentifier *Authentifier
-	signin       usersigning.Handler
-	signup       usersigning.Handler
 	next         xhttp.Handler
 }
 
 // NewRequest returns a new user Authentifier object that handles a http request
 // for user authentication.
-func NewRequest(s session.Handler, c *oauth2.Config, reason AuthReason) Authentifier {
-	return Authentifier{s, c, nil, nil, reason}
+func NewRequest(s session.Handler, c *oauth2.Config) (Authentifier, CallbackHandler) {
+	auth := Authentifier{s, c, nil, nil}
+	return auth, CallbackHandler{&auth, nil}
 }
 
-// WithOptions allows to add some options for the handling of Login.
-// For further information about these options, please refer to the oAuth2 package.
-func (l Authentifier) WithOptions(opt ...oauth2.AuthCodeOption) Authentifier {
+// AuthCodeOptions allows to add some options that will parameterized the login request url.
+// By default, nothing is passed which means that no refresh token is requested.
+func (l Authentifier) AuthCodeOptions(opt ...oauth2.AuthCodeOption) Authentifier {
 	l.Options = opt
 	return l
 }
@@ -89,12 +74,6 @@ func (l Authentifier) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *h
 
 	url := l.Config.AuthCodeURL(state, l.Options...)
 	http.Redirect(w, r, url, http.StatusTemporaryRedirect)
-}
-
-// Callback is a method of the Authentifier that returns a handler for the
-// callback route where a user is reirected once the oAuth login phase is done.
-func (l Authentifier) Callback(signin usersigning.Handler, signup usersigning.Handler) CallbackHandler {
-	return CallbackHandler{&l, signin, signup, nil}
 }
 
 // ServeHTTP handles the request.
@@ -129,17 +108,6 @@ func (c CallbackHandler) ServeHTTP(ctx context.Context, w http.ResponseWriter, r
 	// Put token and http.Client into context object
 	ctx = context.WithValue(ctx, TokenKey, tok)
 	ctx = context.WithValue(ctx, oauth2.HTTPClient, c.authentifier.Config.Client(ctx, tok))
-
-	// TODO:  --------------------------------
-
-	// 2. INSERT SIGNUP/SIGNING LOGIC
-	switch c.authentifier.whatfor {
-	case Signin:
-		c.signin.ServeHTTP(ctx, w, r)
-	case Signup:
-		c.signup.ServeHTTP(ctx, w, r)
-	}
-	// TODO:  --------------------------------
 
 	if c.next != nil {
 		c.next.ServeHTTP(ctx, w, r)
