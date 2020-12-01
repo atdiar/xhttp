@@ -5,6 +5,7 @@ package xhttp
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 )
 
@@ -37,7 +38,12 @@ type handlerlinker struct {
 }
 
 func (h handlerlinker) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
-	h.handler.ServeHTTP(ctx, w, r)
+	ctx, cancel := context.WithCancel(ctx)
+	ctx = context.WithValue(ctx, CancelingKey, cancel)
+	h.handler.ServeHTTP(ctx, w, r) // NOTE if the conext is changed, it needs to be reflected in r.Context()
+	if ctx.Err() != nil {
+		return
+	}
 
 	if h.next != nil {
 		h.next.ServeHTTP(r.Context(), w, r)
@@ -53,6 +59,8 @@ func (h handlerlinker) Link(ha Handler) HandlerLinker {
 // If the Handler happens to modify the context object, it should make sure to
 // swap the *http.Request internal context for the new updated context via the
 // WithContext method.
+// A LinkableHandler always uses a cancelable context whose cancellation function
+// can be retrieved by using the xhttp.CancelingKey.
 func LinkableHandler(h Handler) HandlerLinker {
 	return handlerlinker{h, nil}
 }
@@ -72,3 +80,14 @@ type Handler struct{
 The ServeHTTP method for this Handler can then call the next Handler if one has
 been registered.
 */
+
+type canceledCtxKey int
+
+var CancelingKey = new(canceledCtxKey)
+
+// WriteJSON can be used  to write a json encoded response
+func WriteJSON(w http.ResponseWriter, data interface{}, statusCode int) error {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	return json.NewEncoder(w).Encode(data)
+}

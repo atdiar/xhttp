@@ -162,6 +162,13 @@ func SetCookie(c Cookie) func(Handler) Handler {
 	}
 }
 
+func SetMaxage(maxage int) func(Handler) Handler{
+	return func(h Handler) Handler{
+		h.Cookie.HttpCookie.MaxAge = maxage
+		return h
+	}
+}
+
 // SetStore is a configuration option for the session that adds server-side storage.
 // The presence of a store automatically transforms the session in a server-side
 // one.Only the session id is stored in the session cookie.
@@ -176,6 +183,13 @@ func SetCache(c Cache) func(Handler) Handler {
 	return func(h Handler) Handler {
 		h.Cache = c
 		h.CachingEnabled.Set(true)
+		return h
+	}
+}
+
+func SetUUIDgenerator(f func() (string, error)) func(Handler) Handler {
+	return func(h Handler) Handler {
+		h.uuidgen = f
 		return h
 	}
 }
@@ -498,7 +512,7 @@ func Enforcer(sessions ...Handler) xhttp.HandlerLinker {
 			for _, s := range sessions {
 				c, err = s.Load(c, w, r)
 				if err != nil {
-					http.Error(w, "Some session credentials are missing", http.StatusUnauthorized)
+					http.Error(w, "Some session credentials are missing", http.StatusUnauthorized) // TODO perhaps create an enforcer that does not write the response but return a bool or something
 					return
 				}
 				continue

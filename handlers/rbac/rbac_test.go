@@ -234,3 +234,6 @@ func TestRBAC(t *testing.T) {
 	}
 
 }
+
+// NOTE this example implemenetation uses session storage as a backend for simplicity's sake.
+// Ideally, we should have the Roles and the roles assignments persisted in the database.
