@@ -253,10 +253,6 @@ func (h Handler) Get(key string) ([]byte, error) {
 	if !ok {
 		return nil, ErrNoID
 	}
-	_, err := h.Get(sessionValidityKey)
-	if err != nil {
-		return nil, ErrBadSession.Wraps(err)
-	}
 
 	if h.Cache != nil {
 		res, err := h.Cache.Get(id, key)
@@ -266,6 +262,11 @@ func (h Handler) Get(key string) ([]byte, error) {
 	}
 
 	if h.Store != nil {
+		_, err := h.Store.Get(id, sessionValidityKey)
+		if err != nil {
+			return nil, ErrBadSession.Wraps(err)
+		}
+
 		res, err := h.Store.Get(id, key)
 		if err != nil {
 			return nil, err
@@ -364,12 +365,14 @@ func (h Handler) Put(key string, value []byte, maxage time.Duration) error {
 	if !ok {
 		return ErrNoID
 	}
-	_, err := h.Get(sessionValidityKey)
-	if err != nil {
-		return ErrBadSession.Wraps(err)
-	}
+
 	if h.Store != nil {
-		err := h.Store.Put(id, key, value, maxage)
+		_, err := h.Store.Get(id, sessionValidityKey)
+		if err != nil {
+			return ErrBadSession.Wraps(err)
+		}
+
+		err = h.Store.Put(id, key, value, maxage)
 		if err != nil {
 			return err
 		}
@@ -391,7 +394,7 @@ func (h Handler) Put(key string, value []byte, maxage time.Duration) error {
 		return nil
 	}
 
-	err = h.Cache.Put(id, key, value, maxage)
+	err := h.Cache.Put(id, key, value, maxage)
 	if err != nil {
 		if h.Log != nil {
 			h.Log.Println(err)
@@ -433,10 +436,6 @@ func (h Handler) Delete(key string) error {
 	if !ok {
 		return ErrNoID
 	}
-	_, err := h.Get(sessionValidityKey)
-	if err != nil {
-		return ErrBadSession.Wraps(err)
-	}
 
 	if h.Cache == nil {
 		err := h.Cache.Delete(id, key) // Attempt to delete a value from cache MUST succeed.
@@ -447,6 +446,10 @@ func (h Handler) Delete(key string) error {
 		}
 	}
 	if h.Store != nil {
+		_, err := h.Store.Get(id, sessionValidityKey)
+		if err != nil {
+			return nil // the session is invalid anyway.
+		}
 		return h.Store.Delete(id, key)
 	}
 	h.Cookie.Delete(key)
