@@ -15,7 +15,6 @@ import (
 	"github.com/atdiar/errcode"
 
 	"github.com/atdiar/errors"
-	"github.com/atdiar/flag"
 	"github.com/atdiar/xhttp"
 )
 
@@ -34,9 +33,16 @@ var (
 	ErrExpired = errors.New("Session has expired.").Code(errcode.Expired)
 	// ErrKeyNotFound is returned when getting the value for a given key from the cookie
 	// store failed.
-	ErrKeyNotFound = errors.New("Key missing or expired").Code(errcode.KeyNotFound)
+	ErrKeyNotFound = errors.New("Key missing or expired.").Code(errcode.KeyNotFound)
 	// ErrNoSession is returned when no session has been found for loading
-	ErrNoSession = errors.New("No session").Code(errcode.NoSession)
+	ErrNoSession = errors.New("No session.").Code(errcode.NoSession)
+	// ErrParentInvalid is returned when the parent session is not present or invalid
+	ErrParentInvalid = errors.New("Parent session absent or invalid")
+)
+
+var (
+	sessionValidityKey = "sessionvalid?56dfh468s4hg54gsh"
+	KeySID             = "@$ID@"
 )
 
 // todo deal with sessions that should not be regen on failure to load
@@ -91,6 +97,7 @@ type Interface interface {
 // duration of the session credentials stored by the client.
 // The latter is controlled by the MaxAge field of the session cookie.
 type Handler struct {
+	Parent *Handler
 	Name   string
 	Secret string
 
@@ -103,9 +110,7 @@ type Handler struct {
 
 	// Store is the interface implemented by server-side session stores.
 	Store Store
-
-	Cache          Cache
-	CachingEnabled *flag.CcFlag
+	Cache Cache
 
 	uuidgen func() (string, error)
 
@@ -120,8 +125,6 @@ func New(name string, secret string, options ...func(Handler) Handler) Handler {
 	h.Name = name
 	h.Secret = secret
 	h.ContextKey = &contextKey{}
-	h.CachingEnabled = flag.NewCC()
-	h.CachingEnabled.Set(false) // by default
 
 	h.Cookie = NewCookie(name, secret, 0)
 	h.uuidgen = func() (string, error) {
@@ -162,8 +165,8 @@ func SetCookie(c Cookie) func(Handler) Handler {
 	}
 }
 
-func SetMaxage(maxage int) func(Handler) Handler{
-	return func(h Handler) Handler{
+func SetMaxage(maxage int) func(Handler) Handler {
+	return func(h Handler) Handler {
 		h.Cookie.HttpCookie.MaxAge = maxage
 		return h
 	}
@@ -182,7 +185,6 @@ func SetStore(s Store) func(Handler) Handler {
 func SetCache(c Cache) func(Handler) Handler {
 	return func(h Handler) Handler {
 		h.Cache = c
-		h.CachingEnabled.Set(true)
 		return h
 	}
 }
@@ -208,7 +210,7 @@ func FixedUUID(id string) func(Handler) Handler {
 // Session handler UI
 // *****************************************************************************
 
-// ID will return the session ID if it has not expired. Otherwise it return an error.
+// ID will return the client session ID if it has not expired. Otherwise it return an error.
 func (h Handler) ID() (string, error) {
 	id, ok := h.Cookie.ID()
 	if !ok {
@@ -217,52 +219,125 @@ func (h Handler) ID() (string, error) {
 	return id, nil
 }
 
-// SetID will sett a new id for a session.
+// SetID will set a new id for a client navigation session.
 func (h Handler) SetID(id string) {
 	h.Cookie.SetID(id)
 	h.Cookie.ApplyMods.Set(true)
 }
 
+// UID returns the user id if a user has been linked to the session.
+// It essentially links a navigation session to a user session, for instance after
+// successful login.
+func (h Handler) UID() (string, error) {
+	if h.Store == nil {
+		return "", errors.New("Cannot retrieve server-side session id as session storage has not been set.")
+	}
+	s, err := h.Get(KeySID)
+	return string(s), err
+}
+
+// SetUID will
+func (h Handler) SetUID(id string) error {
+	if h.Store == nil {
+		return errors.New("Cannot set server-side session id as session storage has not been set.")
+	}
+	return h.Put(KeySID, []byte(id), 0)
+}
+
+// TODOD set client and server session id in context object?
+
 // Get will retrieve the value corresponding to a given store key from
-// the session store.
+// the session.
 func (h Handler) Get(key string) ([]byte, error) {
 	id, ok := h.Cookie.ID()
 	if !ok {
 		return nil, ErrNoID
 	}
-	if h.Cache == nil {
-		if h.Store != nil {
-			return h.Store.Get(id, key)
-		}
-		v, ok := h.Cookie.Get(key)
-		if !ok {
-			return nil, ErrKeyNotFound
-		}
-		return []byte(v), nil
+	_, err := h.Get(sessionValidityKey)
+	if err != nil {
+		return nil, ErrBadSession.Wraps(err)
 	}
-	if h.CachingEnabled.IsTrue() {
+
+	if h.Cache != nil {
 		res, err := h.Cache.Get(id, key)
-		if err != nil {
-			err2 := h.Cache.Clear()
-			if err2 != nil {
-				// there must be a problem with the cache, let's turn it off.
-				h.CachingEnabled.Flip()
-				if h.Log != nil {
-					h.Log.Println(err, err2)
-				}
-			}
-		} else {
-			// if we hit the cache, let's return the result.
-			return res, nil
+		if err == nil {
+			return res, err
 		}
 	}
-	// On cache miss, we fetch from store/cookiestore and then try to update the cache
-	// with the result before returning it.
+
 	if h.Store != nil {
 		res, err := h.Store.Get(id, key)
 		if err != nil {
 			return nil, err
 		}
+		if h.Cache != nil {
+			maxage, err := h.Store.TimeToExpiry(id, key)
+			if err != nil {
+				if h.Log != nil {
+					h.Log.Print(err)
+				}
+				return res, nil
+			}
+			err = h.Cache.Put(id, key, res, maxage)
+			if err != nil {
+				if h.Log != nil {
+					h.Log.Print(err)
+				}
+			}
+		}
+		return res, err
+	}
+
+	v, ok := h.Cookie.Get(key)
+	if !ok {
+		return nil, ErrKeyNotFound
+	}
+	res := []byte(v)
+	if h.Cache != nil {
+		maxage, err := h.Cookie.TimeToExpiry(key)
+		if err != nil {
+			if h.Log != nil {
+				h.Log.Print(err)
+			}
+			return res, nil
+		}
+		err = h.Cache.Put(id, key, res, maxage)
+		if err != nil {
+			if h.Log != nil {
+				h.Log.Print(err)
+			}
+		}
+	}
+	return res, nil
+}
+
+// UGet attempts to retrieve a value from the user session instead of the running
+// server session when a user id has been registered.
+//
+// A segregated user data store  allows to make the distinction between navigation sessions
+// which are transient and can be regenerated and the user session (which could
+// traditionally be stored fully in-database). The advantage is that one user
+// can potentially be tied to multiple concurrent  navigation sessions such as
+// whren browsing from different devices or in a multi-tenant account.
+func (h Handler) UGet(key string) ([]byte, error) {
+	if h.Store == nil {
+		return nil, ErrBadStorage
+	}
+	id, err := h.UID()
+	if err != nil {
+		return nil, err
+	}
+	if h.Cache != nil {
+		res, err := h.Cache.Get(id, key)
+		if err == nil {
+			return res, err
+		}
+	}
+	res, err := h.Store.Get(id, key)
+	if err != nil {
+		return nil, err
+	}
+	if h.Cache != nil {
 		maxage, err := h.Store.TimeToExpiry(id, key)
 		if err != nil {
 			if h.Log != nil {
@@ -270,55 +345,28 @@ func (h Handler) Get(key string) ([]byte, error) {
 			}
 			return res, nil
 		}
-		if h.CachingEnabled.IsTrue() {
-			err = h.Cache.Put(id, key, res, maxage)
-			if err != nil {
-				err2 := h.Cache.Clear()
-				if err2 != nil {
-					h.CachingEnabled.Flip()
-					if h.Log != nil {
-						h.Log.Println(err, err2)
-					}
-				}
-			}
-		}
-
-		return res, nil
-	}
-	v, ok := h.Cookie.Get(key)
-	if !ok {
-		return nil, ErrKeyNotFound
-	}
-	res := []byte(v)
-	maxage, err := h.Store.TimeToExpiry(id, key)
-	if err != nil {
-		if h.Log != nil {
-			h.Log.Print(err)
-		}
-		return res, nil
-	}
-	if h.CachingEnabled.IsTrue() {
 		err = h.Cache.Put(id, key, res, maxage)
 		if err != nil {
-			err2 := h.Cache.Clear()
-			if err2 != nil {
-				h.CachingEnabled.Flip()
-				if h.Log != nil {
-					h.Log.Println(err, err2)
-				}
+			if h.Log != nil {
+				h.Log.Print(err)
 			}
 		}
 	}
-	return res, nil
+	return res, err
 }
 
-// Put will save a key/value pair in the session store.
+// Put will save a key/value pair in the session store (preferentially).
+// If no store is present, cookie storage will be used.
 // if maxage < 0, the key/session should expire immediately.
 // if maxage = 0, the key/session has no set expiry.
 func (h Handler) Put(key string, value []byte, maxage time.Duration) error {
 	id, ok := h.Cookie.ID()
 	if !ok {
 		return ErrNoID
+	}
+	_, err := h.Get(sessionValidityKey)
+	if err != nil {
+		return ErrBadSession.Wraps(err)
 	}
 	if h.Store != nil {
 		err := h.Store.Put(id, key, value, maxage)
@@ -328,16 +376,10 @@ func (h Handler) Put(key string, value []byte, maxage time.Duration) error {
 		if h.Cache == nil {
 			return nil
 		}
-		if h.CachingEnabled.IsTrue() {
-			err = h.Cache.Put(id, key, value, maxage)
-			if err != nil {
-				err2 := h.Cache.Clear()
-				if err2 != nil {
-					h.CachingEnabled.Flip()
-					if h.Log != nil {
-						h.Log.Println(err, err2)
-					}
-				}
+		err = h.Cache.Put(id, key, value, maxage)
+		if err != nil {
+			if h.Log != nil {
+				h.Log.Println(err)
 			}
 		}
 		return nil
@@ -349,19 +391,39 @@ func (h Handler) Put(key string, value []byte, maxage time.Duration) error {
 		return nil
 	}
 
-	if h.CachingEnabled.IsTrue() {
-		err := h.Cache.Put(id, key, value, maxage)
-		if err != nil {
-			err2 := h.Cache.Clear()
-			if err2 != nil {
-				h.CachingEnabled.Flip()
-				if h.Log != nil {
-					h.Log.Println(err, err2)
-				}
-			}
+	err = h.Cache.Put(id, key, value, maxage)
+	if err != nil {
+		if h.Log != nil {
+			h.Log.Println(err)
 		}
 	}
 
+	return nil
+}
+
+// UPut is used to store a value in user global storage if it exists, as opposed
+// to the navigation session storage which is transient.
+func (h Handler) UPut(key string, value []byte, maxage time.Duration) error {
+	if h.Store == nil {
+		return ErrBadStorage
+	}
+	id, err := h.UID()
+	if err != nil {
+		return err
+	}
+	err = h.Store.Put(id, key, value, 0) // maxage is 0. value should be persisted
+	if err != nil {
+		return err
+	}
+	if h.Cache == nil {
+		return nil
+	}
+	err = h.Cache.Put(id, key, value, maxage)
+	if err != nil {
+		if h.Log != nil {
+			h.Log.Println(err)
+		}
+	}
 	return nil
 }
 
@@ -371,36 +433,57 @@ func (h Handler) Delete(key string) error {
 	if !ok {
 		return ErrNoID
 	}
-	if h.Cache == nil {
-		if h.Store != nil {
-			return h.Store.Delete(id, key)
-		}
-		h.Cookie.Delete(key)
-		return nil
+	_, err := h.Get(sessionValidityKey)
+	if err != nil {
+		return ErrBadSession.Wraps(err)
 	}
-	if h.CachingEnabled.IsTrue() {
+
+	if h.Cache == nil {
 		err := h.Cache.Delete(id, key) // Attempt to delete a value from cache MUST succeed.
 		if err != nil {
-			err2 := h.Cache.Clear()
-			if err2 != nil {
-				h.CachingEnabled.Flip()
-				if h.Log != nil {
-					h.Log.Println(err, err2)
-				}
+			if h.Log != nil {
+				h.Log.Println(err)
 			}
 		}
 	}
+	if h.Store != nil {
+		return h.Store.Delete(id, key)
+	}
+	h.Cookie.Delete(key)
+	return nil
+}
 
-	err := h.Store.Delete(id, key)
+// UDelete is used to remove a value from global user session storage.
+func (h Handler) UDelete(key string) error {
+	if h.Store == nil {
+		return ErrBadStorage
+	}
+	id, err := h.UID()
 	if err != nil {
 		return err
 	}
-	return nil
+
+	if h.Cache == nil {
+		err := h.Cache.Delete(id, key) // Attempt to delete a value from cache MUST succeed.
+		if err != nil {
+			if h.Log != nil {
+				h.Log.Println(err)
+			}
+		}
+	}
+	return h.Store.Delete(id, key)
+
 }
 
 // Load attempts to find the latest version of the session cookie that will be set
 // in the response.
 func (h *Handler) Load(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
+	if h.Parent != nil {
+		_, err := h.Parent.Load(ctx, res, req)
+		if err != nil {
+			return context.WithValue(ctx, h.ContextKey, ErrParentInvalid), ErrParentInvalid.Wraps(err)
+		}
+	}
 	c, ok := ctx.Value(h.ContextKey).(http.Cookie)
 	if !ok {
 		// in this case, there is no session cookie already set;
@@ -419,7 +502,7 @@ func (h *Handler) Load(ctx context.Context, res http.ResponseWriter, req *http.R
 		if err != nil {
 			// at this point, should generate a new session since there is no session cookie
 			// sent by the client.
-			return context.WithValue(ctx, h.ContextKey, ErrBadSession), err
+			return context.WithValue(ctx, h.ContextKey, ErrBadSession), ErrBadSession.Wraps(err)
 		}
 		err = h.Cookie.Decode(*reqc)
 		if err != nil {
@@ -429,6 +512,13 @@ func (h *Handler) Load(ctx context.Context, res http.ResponseWriter, req *http.R
 			return context.WithValue(ctx, h.ContextKey, ErrBadCookie), ErrBadCookie.Wraps(err)
 		}
 		h.Cookie.ApplyMods.Set(false)
+		// TODO
+		// steps:  a) load cookie b)  retrieve session id c) verify session state server-side (means that a value should be stored server side when generating session)
+		_, err = h.Get(sessionValidityKey)
+		if err != nil {
+			return context.WithValue(ctx, h.ContextKey, ErrBadSession), ErrBadSession.Wraps(err)
+		}
+
 		return context.WithValue(ctx, h.ContextKey, *(h.Cookie.HttpCookie)), nil
 	}
 	err := h.Cookie.Decode(c)
@@ -461,6 +551,11 @@ func (h *Handler) Generate(ctx context.Context, res http.ResponseWriter, req *ht
 		return ctx, err
 	}
 
+	err = h.Put(sessionValidityKey, []byte("true"), time.Duration(h.Cookie.HttpCookie.MaxAge))
+	if err != nil {
+		return ctx, errors.New("Failed to generate new session.").Wraps(err)
+	}
+
 	// 2. Update session cookie
 	for k := range h.Cookie.Data {
 		delete(h.Cookie.Data, k)
@@ -469,6 +564,20 @@ func (h *Handler) Generate(ctx context.Context, res http.ResponseWriter, req *ht
 	h.Cookie.ApplyMods.Set(true)
 
 	return h.SetSessionCookie(ctx, res, req)
+}
+
+// Spawn returns an handler for a subsession, that is, a dependent session.
+func (h *Handler) Spawn(name string, options ...func(Handler) Handler) Handler {
+	sh := New(name, h.Secret, options...)
+	sh.ID()
+	sh.Parent = h
+	return sh
+}
+
+// Revoke revokes the current session.
+func (h Handler) Revoke() error {
+	h.Cookie.Expire()
+	return h.Delete(sessionValidityKey)
 }
 
 // ServeHTTP effectively makes the session a xhttp request handler.
@@ -509,7 +618,7 @@ func Enforcer(sessions ...Handler) xhttp.HandlerLinker {
 		c := ctx
 		var err error
 		if len(sessions) != 0 {
-			for _, s := range sessions {
+			for _, s := range sessions { // TODO cancel context
 				c, err = s.Load(c, w, r)
 				if err != nil {
 					http.Error(w, "Some session credentials are missing", http.StatusUnauthorized) // TODO perhaps create an enforcer that does not write the response but return a bool or something
@@ -522,6 +631,7 @@ func Enforcer(sessions ...Handler) xhttp.HandlerLinker {
 	}))
 }
 
+/*
 // todo EnforceHighest
 
 // Ordered groups sessions by decreasing priority order (index 0 is the highest priority).
@@ -775,6 +885,7 @@ func (g Grouped) Link(hn xhttp.Handler) xhttp.HandlerLinker {
 	g.next = hn
 	return g
 }
+*/
 
 // ComputeHmac256 returns a base64 Encoded MAC.
 func ComputeHmac256(message, secret []byte) string {

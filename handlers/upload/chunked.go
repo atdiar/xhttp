@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/atdiar/bottleneck"
 	"github.com/atdiar/errors"
 	"github.com/atdiar/xhttp"
 	"github.com/atdiar/xhttp/handlers/session"
@@ -266,24 +267,45 @@ func (h ChunkHandler) ParseUpload(ctx context.Context, w http.ResponseWriter, r 
 type ChunkHandler struct {
 	Handler
 	Session session.Handler
+
+	maxage         int
+	maxConcurrency int
+	bottleneck     *bottleneck.Client
 }
 
 // New returns a handler for a chunked upload request.
 // An upload request starts by the creation of an upload session.
 // By defauklt, the session remains valid for seven days
 func Chunked(h Handler) ChunkHandler {
-	uploadSessionHandler := session.New("upload", h.Session.Secret).Configure(session.SetMaxage(7*24*60*60), session.SetUUIDgenerator(h.IDgenerator))
+	uploadSessionHandler := h.Session.Spawn("upload", session.SetMaxage(7*24*60*60), session.SetUUIDgenerator(h.IDgenerator))
 	// By default, the upload id generator is the the file uuid generator.
-	return ChunkHandler{h, uploadSessionHandler}
+	return ChunkHandler{h, uploadSessionHandler, 7 * 24 * 60 * 60, 1, nil}
 }
 
-// SetSessionMaxAge sets the upload session maxage.
-func (c ChunkHandler) SetSessionMaxAge(maxage int) ChunkHandler {
-	c.Session = c.Session.Configure(session.SetMaxage(maxage))
+func (c ChunkHandler) Configure(functions ...func(ChunkHandler) ChunkHandler) ChunkHandler {
+	for _, f := range functions {
+		c = f(c)
+	}
 	return c
 }
 
-func (c ChunkHandler) UploadInitializer() Initializer {
+// SetSessionMaxAge sets the upload session maxage in seconds.
+func SetSessionMaxAge(maxage int) func(ChunkHandler) ChunkHandler {
+	return func(c ChunkHandler) ChunkHandler {
+		c.Session = c.Session.Configure(session.SetMaxage(maxage))
+		c.maxage = maxage
+		return c
+	}
+}
+func SetMaxConcurrency(n int, limiter *bottleneck.Client) func(ChunkHandler) ChunkHandler {
+	return func(c ChunkHandler) ChunkHandler {
+		c.maxConcurrency = n
+		c.bottleneck = limiter
+		return c
+	}
+}
+
+func (c ChunkHandler) Initializer() Initializer {
 	return Initializer{&c, nil}
 }
 
@@ -340,6 +362,8 @@ type Initializer struct {
 	next xhttp.Handler
 }
 
+// SetIDgenerator allows for the specification of an upload id generator.
+// For example when using an uploadid defined by a third party service such as s3.
 func (i Initializer) SetIDgenerator(f func() (string, error)) Initializer {
 	i.c.Session = i.c.Session.Configure(session.SetUUIDgenerator(f))
 	return i
@@ -347,19 +371,24 @@ func (i Initializer) SetIDgenerator(f func() (string, error)) Initializer {
 
 func (i Initializer) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	ctx, err := i.c.Session.Load(ctx, w, r)
-	if err == nil {
-		http.Error(w, "Concurrent uploads are not supported.", http.StatusBadRequest)
-		return
+	if err != nil {
+		ctx, err = i.c.Session.Generate(ctx, w, r)
+		if err != nil {
+			http.Error(w, "Failed to generate upload session.", http.StatusInternalServerError)
+			if i.c.Handler.Log != nil {
+				i.c.Handler.Log.Print(err)
+			}
+			return
+		}
 	}
 
-	ctx, err = i.c.Session.Generate(ctx, w, r)
-	if err != nil {
-		http.Error(w, "Failed to generate upload session.", http.StatusInternalServerError)
-		if i.c.Handler.Log != nil {
-			i.c.Handler.Log.Print(err)
-		}
-		return
-	}
+	// 1. either we manage to retrieve the upload session tied to the current navigation session
+	// or we create a new upload session for the current navigation session
+	//
+	// 2. we have to get the rights to start a new upload by getting a ticket from the bottleneck service
+	// so we try to create the bottleneck with the maxConcurrency setting  TODO decide if limit should be per user or per session
+	// if per navigation session, the bottleneck is a bit less necessary
+	// if per user, we need an active user session so that we can use the userid as id for the bottleneck.
 
 	fileuuid, err := i.c.IDgenerator()
 	if err != nil {
@@ -386,6 +415,11 @@ func (i Initializer) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *ht
 		return
 	}
 
+	ctx, err = i.c.Session.SetSessionCookie(ctx, w, r)
+	if err != nil {
+		http.Error(w, "Unable to set upload session cookie", http.StatusInternalServerError)
+		return
+	}
 	w.Write([]byte(uploadid))
 
 	if i.c.next != nil {

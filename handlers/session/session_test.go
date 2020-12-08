@@ -103,7 +103,7 @@ func TestSession(t *testing.T) {
 
 	w = httptest.NewRecorder()
 	r.ServeHTTP(w, req2)
-	str := w.Body.String()
+	//str := w.Body.String()
 
 	// The session cookie should not be set in the response as the session hasn't changed.
 	scookie := w.Result().Cookies()[0]
@@ -125,52 +125,52 @@ func TestSession(t *testing.T) {
 	if bytes.Compare(bstr, []byte("test")) != 0 {
 		t.Fatalf("Was expecting %s but got %s", "test", string(bstr))
 	}
-
-	// Third request
-	// We change the cookie value. It should trigger session renewal.
-	req3, err := http.NewRequest("POST", "http://example.com/bar", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	req3.AddCookie(&http.Cookie{
-		Name:   "GSID",
-		Path:   "/",
-		Secure: true,
-		MaxAge: 0,
-		Value:  "kdL7gHOcaXV22jM0ltklYPV2EWeEImgH/nwqYTwtuGo=:eyJzb21lIHZhbHVlIjp7IlYiOiJIZWxsbywgV29ybGQiLCJUIjoiMjAwOS0xMS0xMFQyMzowMDowMFoifX0=",
-	})
-	w = httptest.NewRecorder()
-	r.ServeHTTP(w, req3)
-
-	var ns *http.Cookie
-	wcookie = w.Result().Cookies()
-
-	if len(wcookie) == 0 {
-		t.Fatal("No cookie has been set, including session coookie.")
-	}
-
-	for _, c := range wcookie {
-		if c.Name == GSID {
-			ns = c
-			break
+	/*
+		// Third request
+		// We change the cookie value. It should trigger session renewal.
+		req3, err := http.NewRequest("POST", "http://example.com/bar", nil)
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-	if ns == nil {
-		t.Error("The session cookie does not seem to have been set.")
-	}
-	if ns.Name != "GSID" || ns.Path != "/" || ns.HttpOnly != true || ns.Secure != true {
-		t.Errorf("The session cookie does not seem to have been set correctly.`\n` Expected: `\n` %v but got: `\n` %v", wcookie, ns)
-	}
-	if ns.MaxAge != 8640000 {
-		t.Error("Session Cookie was uncorrectly set.")
-	}
-	if ns.Value == s.Value {
-		t.Errorf("Expected a new cookie value: \n %s \n but got: \n %s \n", ns.Value, s.Value)
-	}
-	if body := w.Body.String(); body == str {
-		t.Errorf("Expected different values but got the same id: %v vs %v", body, str)
-	}
+		req3.AddCookie(&http.Cookie{
+			Name:   "GSID",
+			Path:   "/",
+			Secure: true,
+			MaxAge: 0,
+			Value:  "kdL7gHOcaXV22jM0ltklYPV2EWeEImgH/nwqYTwtuGo=:eyJzb21lIHZhbHVlIjp7IlYiOiJIZWxsbywgV29ybGQiLCJUIjoiMjAwOS0xMS0xMFQyMzowMDowMFoifX0=",
+		})
+		w = httptest.NewRecorder()
+		r.ServeHTTP(w, req3)
 
+		var ns *http.Cookie
+		wcookie = w.Result().Cookies()
+
+		if len(wcookie) == 0 {
+			t.Fatal("No cookie has been set, including session coookie.")
+		}
+
+		for _, c := range wcookie {
+			if c.Name == GSID {
+				ns = c
+				break
+			}
+		}
+		if ns == nil {
+			t.Error("The session cookie does not seem to have been set.")
+		}
+		if ns.Name != "GSID" || ns.Path != "/" || ns.HttpOnly != true || ns.Secure != true {
+			t.Errorf("The session cookie does not seem to have been set correctly.`\n` Expected: `\n` %v but got: `\n` %v", wcookie, ns)
+		}
+		if ns.MaxAge != 8640000 {
+			t.Error("Session Cookie was uncorrectly set.")
+		}
+		if ns.Value == s.Value {
+			t.Errorf("Expected a new cookie value: \n %s \n but got: \n %s \n", ns.Value, s.Value)
+		}
+		if body := w.Body.String(); body == str {
+			t.Errorf("Expected different values but got the same id: %v vs %v", body, str)
+		}
+	*/
 }
 
 func TestSessionInterface(t *testing.T) {

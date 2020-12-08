@@ -53,6 +53,7 @@ type contextKey struct{}
 // expected FileField.
 type Form []Field
 
+// NewForm returns an upload form specification used when parsing a form upload request.
 func NewForm(fields ...Field) Form {
 	return fields
 }
@@ -353,6 +354,10 @@ func (h Handler) ParseUpload(ctx context.Context, w http.ResponseWriter, r *http
 	return ParseResult{f, onerror}, nil
 }
 
+// ParseResult holds the results from parsing a form upload request.
+// It holds the form filled from the parsed data and a ffunction that can be used
+// to try and  rollback the file uploads. (for instance in case registering the
+// file data in the database failed, one could decide to rollback the file storage)
 type ParseResult struct {
 	Form     Form
 	Rollback *canceler
@@ -384,6 +389,7 @@ func (c *canceler) Cancel() error {
 	return l
 }
 
+// Field is a type used to define the structure of a form field.
 type Field struct {
 	Name        string
 	Body        []byte
@@ -416,10 +422,15 @@ func (f FileList) Size() int64 {
 	return count
 }
 
+// NewField is used to create the specification for a data form field with  that
+// the client request should adhere to.
 func NewField(name string, sizelimit int, required bool, AcceptedContentTypes ...string) Field {
 	return Field{name, nil, "", "", nil, nil, newSet().Add(AcceptedContentTypes...), int64(sizelimit), required, nil}
 }
 
+// NewFileField is used to create the specification for a file upload form field
+//  with constraints that the client should adhere to and that the request parser
+// will verify.
 func NewFileField(name string, sizelimit int, required bool, multiple bool, storagepath string, uploadFn func(context.Context, Object) (int64, func() error, error), AcceptedContentTypes ...string) Field {
 	var l int
 	act := newSet().Add(AcceptedContentTypes...)
@@ -430,11 +441,14 @@ func NewFileField(name string, sizelimit int, required bool, multiple bool, stor
 	return Field{name, nil, "", storagepath, FileList(make([]Object, l)), uploadFn, act, int64(sizelimit), required, nil}
 }
 
+// Validators register validatiog functions for a form field .
 func (f Field) Validator(v ...func(Field) (bool, error)) Field {
 	f.Validators = v
 	return f
 }
 
+// IsValid rettur,s the validity of a submitted form field with an accompanying
+// explanatory error in case of failure.
 func (f Field) IsValid() (bool, error) {
 	for _, v := range f.Validators {
 		if b, err := v(f); !b {
@@ -444,6 +458,7 @@ func (f Field) IsValid() (bool, error) {
 	return true, nil
 }
 
+// Object is a structured representation for an upload file and its metadata.
 type Object struct {
 	UploadID   string // can be created by the upload process/function.
 	UploaderID string
@@ -461,6 +476,8 @@ type Object struct {
 	Binary      io.Reader
 }
 
+// EvalPath replaces the placeholder strings starting by '%' with their respective
+// value as stored in the Object type variable.
 func (o Object) EvalPath() string {
 	p := strings.ReplaceAll(o.Path, "%uploadid", o.UploadID)
 	p = strings.ReplaceAll(p, "%uploaderid", o.UploaderID)
@@ -469,6 +486,10 @@ func (o Object) EvalPath() string {
 	return p
 }
 
+// NewFile creates a new upload.Object used to hold uploading information as well as
+// upload data accessible via an io.Reader.
+// The accompanying  upload object info can be stored in the database once the
+// data has been successfully uploaded.
 func NewFile(src io.Reader, filename string, contenttype string, uploaderID string, uploadpath string) Object {
 	o := Object{}
 	o.Binary = src
@@ -479,13 +500,15 @@ func NewFile(src io.Reader, filename string, contenttype string, uploaderID stri
 	return o
 }
 
+// Handler handles http upload requests, verifying that the request implements the
+// specification of the upload.Form.
 type Handler struct {
 	Form    Form
-	Session session.Handler
+	Session session.Handler // used to retrieve the session id
 
 	Path string
 
-	IDgenerator func() (string, error)
+	IDgenerator func() (string, error) // used to generate a file unique identifier
 
 	Log *log.Logger
 
@@ -497,8 +520,8 @@ type Handler struct {
 // New returns a http request handler that will parse a request in order to
 // try and retrieve values if the structure of the request fits the expected
 // model defined in an upload Form.
-func New(f Form, s session.Handler, uploadpath string, uploadIDgenerator func() (string, error)) Handler {
-	return Handler{f, s, uploadpath, uploadIDgenerator, nil, new(contextKey), nil}
+func New(f Form, s session.Handler, uploadpath string, fileUUIDgenerator func() (string, error)) Handler {
+	return Handler{f, s, uploadpath, fileUUIDgenerator, nil, new(contextKey), nil}
 }
 
 // WithLogger enables logging capabilities. Typically for logging errors. such as
@@ -547,6 +570,8 @@ func (h Handler) Link(hn xhttp.Handler) xhttp.HandlerLinker {
 	return h
 }
 
+// RetrieveForm attempts to retrieve the results obtained after an upload request
+// has been parsed.
 func (h Handler) RetrieveForm(ctx context.Context) (ParseResult, bool) {
 	p, ok := ctx.Value(h.ctxKey).(ParseResult)
 	return p, ok

@@ -189,6 +189,19 @@ func (c Cookie) Delete(key string) {
 	c.ApplyMods.Set(true)
 }
 
+func(c Cookie) TimeToExpiry(key string) (time.Duration,error){
+	val, ok := c.Data[key]
+	if !ok {
+		return 0, errors.New("no value stored for key: " + key)
+	}
+	if val.Expired() {
+		delete(c.Data, key)
+		c.ApplyMods.Set(true)
+		return 0, errors.New("no value stored for key: " + key)
+	}
+	return val.Expiry.Sub(time.Now().UTC()), nil
+}
+
 // Erase deletes the session cookies sharing the session name
 func (c Cookie) Erase(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	cookieslice := r.Cookies()

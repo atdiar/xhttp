@@ -73,19 +73,22 @@ func (g GoogleProvider) ServeHTTP(ctx context.Context, w http.ResponseWriter, r 
 		id, err := g.Session.ID()
 		if err != nil {
 			g.Session.Cookie.Erase(ctx, w, r)
+			// TODO revoke session ?
 			http.Error(w, "Could not create user session ID: \n"+err.Error(), http.StatusInternalServerError)
 		}
 		userinfo["id"] = id
 		err = g.CreateUser(ctx, userinfo)
 		if err != nil {
 			g.Session.Cookie.Erase(ctx, w, r)
+			// TODO revoke session ?
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 		http.Redirect(w, r, g.SignUpURL, http.StatusTemporaryRedirect)
 		return
 	}
-
-	g.Session.SetID(userid)
+	// TODO review user id should not be saved in cookie  sessionid may . user id and session id may have to be linked transitorily
+	// g.Session.SetID(userid)
+	g.Session.Put("userid", []byte(userid), 0)
 	ctx, err = g.Session.SetSessionCookie(ctx, w, r)
 	if err != nil {
 		http.Error(w, "Could not load user session: \n"+err.Error(), http.StatusInternalServerError)
