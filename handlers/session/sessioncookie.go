@@ -111,11 +111,12 @@ func NewCookie(name string, secret string, maxage int, options ...func(Cookie) C
 			s = opt(s)
 		}
 	}
+
 	_, ok := s.ID()
 	if !ok {
 		panic("ERR: id is a reserved key for the storage of the session id. Do not erase it.")
 	}
-	s.ApplyMods.Set(true)
+	s.Touch()
 	return s
 }
 
@@ -189,7 +190,7 @@ func (c Cookie) Delete(key string) {
 	c.ApplyMods.Set(true)
 }
 
-func(c Cookie) TimeToExpiry(key string) (time.Duration,error){
+func (c Cookie) TimeToExpiry(key string) (time.Duration, error) {
 	val, ok := c.Data[key]
 	if !ok {
 		return 0, errors.New("no value stored for key: " + key)
@@ -219,47 +220,15 @@ func (c Cookie) Erase(ctx context.Context, w http.ResponseWriter, r *http.Reques
 func (c Cookie) Expire() {
 	c.Data["id"] = NewCookieValue("", time.Duration(c.HttpCookie.MaxAge), AddTimeLimit(time.Now()))
 	c.HttpCookie.MaxAge = -1
-	c.ApplyMods.Set(true)
+	c.Set(sessionValidityKey, "false", time.Duration(c.HttpCookie.MaxAge))
 }
 
 // Touch sets a new maxage for the session cookie and updates the expiry date of
 // every non-expired items stored in the session cookie (if provided)
 // Otherwise, it just resets the session duration using the previous session
 // cookie maxage value.
-// If several maxage values are provided, only the lqst one will come in effect.
-func (c Cookie) Touch(maxages ...int) {
-	maxage := c.HttpCookie.MaxAge
-	if maxages != nil {
-		maxage = maxages[len(maxages)-1]
-	}
-	if maxage < 0 {
-		c.Expire()
-		return
-	}
-
-	if maxage == 0 {
-		c.HttpCookie.MaxAge = maxage
-		for k, v := range c.Data {
-			if v.Expired() {
-				delete(c.Data, k)
-				continue
-			}
-			v.Expiry = nil
-		}
-		c.ApplyMods.Set(true)
-		return
-	}
-
-	c.HttpCookie.MaxAge = maxage
-	n := time.Now().UTC().Add(time.Duration(maxage))
-	for k, v := range c.Data {
-		if v.Expired() {
-			delete(c.Data, k)
-			continue
-		}
-		v.Expiry = &n
-	}
-	c.ApplyMods.Set(true)
+func (c Cookie) Touch() {
+	c.Set(sessionValidityKey, "true", time.Duration(c.HttpCookie.MaxAge))
 }
 
 // Encode will return a session cookie holding the json serialized session data.
@@ -269,11 +238,13 @@ func (c Cookie) Encode() (http.Cookie, error) {
 		return http.Cookie{}, errors.New("Encoding failure for session cookie.").Wraps(err)
 	}
 	v := ComputeHmac256(jval, []byte(c.Secret)) + c.Delimiter + base64.StdEncoding.EncodeToString(jval)
-	if len(v) > 4000 {
-		return http.Cookie{}, errors.New("ERR: JSON encoded value too big for cookie. Max 4000 bytes")
-	}
+
 	c.HttpCookie.Value = v
+	if len(c.HttpCookie.String()) > 4096 {
+		return http.Cookie{}, errors.New("ERR: JSON encoded value too big for cookie. Max allowed length is 4kB i.e. 4096 bytes")
+	}
 	c.ApplyMods.Set(true)
+
 	return *(c.HttpCookie), nil
 }
 

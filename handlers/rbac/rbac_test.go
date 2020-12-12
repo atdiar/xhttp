@@ -93,7 +93,7 @@ func AssignRoleToUserFn(s session.Handler) func(context.Context, http.ResponseWr
 		if err != nil {
 			return ctx, err
 		}
-		ctx, err = s.SetSessionCookie(ctx, w, req)
+		ctx, err = s.Save(ctx, w, req)
 		return ctx, err
 	}
 }

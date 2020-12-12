@@ -43,7 +43,7 @@ func Multiplexer(t *testing.T) (xhttp.ServeMux, Handler) {
 		}
 
 		s.Put("test", []byte("test"), 86400*time.Minute)
-		s.SetSessionCookie(ctx, res, req)
+		s.Save(ctx, res, req)
 
 		res.Write([]byte(id))
 	}))

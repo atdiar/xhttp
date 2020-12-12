@@ -8,7 +8,9 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"log"
+	random "math/rand"
 	"net/http"
 	"time"
 
@@ -86,7 +88,7 @@ type Interface interface {
 	Put(key string, value []byte, maxage time.Duration) error
 	Delete(key string) error
 	Load(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error)
-	SetSessionCookie(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error)
+	Save(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error)
 	Generate(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error)
 }
 
@@ -97,13 +99,14 @@ type Interface interface {
 // duration of the session credentials stored by the client.
 // The latter is controlled by the MaxAge field of the session cookie.
 type Handler struct {
-	Parent *Handler
+	parent *Handler
 	Name   string
 	Secret string
 
 	// Cookie is the field that holds client side stored user session data
 	// via a session cookie sent with every requests.
-	Cookie Cookie
+	Cookie     Cookie
+	ServerOnly bool
 
 	// Handler specific context key under which  the session cookie is saved
 	ContextKey *contextKey
@@ -128,12 +131,13 @@ func New(name string, secret string, options ...func(Handler) Handler) Handler {
 
 	h.Cookie = NewCookie(name, secret, 0)
 	h.uuidgen = func() (string, error) {
-		b := make([]byte, 70)
-		_, err := rand.Read(b)
+		bstr := make([]byte, 32)
+		_, err := rand.Read(bstr)
 		if err != nil {
-			return "", err
+			random.Seed(time.Now().UnixNano())
+			_, _ = random.Read(bstr)
 		}
-		return string(b), nil
+		return string(bstr), nil
 	}
 
 	if options != nil {
@@ -142,6 +146,9 @@ func New(name string, secret string, options ...func(Handler) Handler) Handler {
 				h = opt(h)
 			}
 		}
+	}
+	if h.ServerOnly && h.Store == nil {
+		panic(errors.New("error: serveronly session with no server storage").Error())
 	}
 	return h
 }
@@ -206,6 +213,13 @@ func FixedUUID(id string) func(Handler) Handler {
 	}
 }
 
+func ServerOnly() func(Handler) Handler {
+	return func(h Handler) Handler {
+		h.ServerOnly = true
+		return h
+	}
+}
+
 // *****************************************************************************
 // Session handler UI
 // *****************************************************************************
@@ -225,25 +239,6 @@ func (h Handler) SetID(id string) {
 	h.Cookie.ApplyMods.Set(true)
 }
 
-// UID returns the user id if a user has been linked to the session.
-// It essentially links a navigation session to a user session, for instance after
-// successful login.
-func (h Handler) UID() (string, error) {
-	if h.Store == nil {
-		return "", errors.New("Cannot retrieve server-side session id as session storage has not been set.")
-	}
-	s, err := h.Get(KeySID)
-	return string(s), err
-}
-
-// SetUID will
-func (h Handler) SetUID(id string) error {
-	if h.Store == nil {
-		return errors.New("Cannot set server-side session id as session storage has not been set.")
-	}
-	return h.Put(KeySID, []byte(id), 0)
-}
-
 // TODOD set client and server session id in context object?
 
 // Get will retrieve the value corresponding to a given store key from
@@ -255,31 +250,38 @@ func (h Handler) Get(key string) ([]byte, error) {
 	}
 
 	if h.Cache != nil {
-		res, err := h.Cache.Get(id, key)
+		res, err := h.Cache.Get(id, h.Name+"/"+key)
 		if err == nil {
 			return res, err
 		}
 	}
 
 	if h.Store != nil {
-		_, err := h.Store.Get(id, sessionValidityKey)
+		_, err := h.Store.Get(id, h.Name+"/"+sessionValidityKey)
 		if err != nil {
 			return nil, ErrBadSession.Wraps(err)
 		}
+		// let's touch the session
+		err = h.Touch()
+		if err != nil {
+			if h.Log != nil {
+				h.Log.Print(err)
+			}
+		}
 
-		res, err := h.Store.Get(id, key)
+		res, err := h.Store.Get(id, h.Name+"/"+key)
 		if err != nil {
 			return nil, err
 		}
 		if h.Cache != nil {
-			maxage, err := h.Store.TimeToExpiry(id, key)
+			maxage, err := h.Store.TimeToExpiry(id, h.Name+"/"+key)
 			if err != nil {
 				if h.Log != nil {
 					h.Log.Print(err)
 				}
 				return res, nil
 			}
-			err = h.Cache.Put(id, key, res, maxage)
+			err = h.Cache.Put(id, h.Name+"/"+key, res, maxage)
 			if err != nil {
 				if h.Log != nil {
 					h.Log.Print(err)
@@ -289,9 +291,19 @@ func (h Handler) Get(key string) ([]byte, error) {
 		return res, err
 	}
 
+	if h.ServerOnly {
+		panic(errors.New("error: serveronly session with no server storage").Error())
+	}
+
 	v, ok := h.Cookie.Get(key)
 	if !ok {
 		return nil, ErrKeyNotFound
+	}
+	err := h.Touch()
+	if err != nil {
+		if h.Log != nil {
+			h.Log.Print(err)
+		}
 	}
 	res := []byte(v)
 	if h.Cache != nil {
@@ -302,7 +314,7 @@ func (h Handler) Get(key string) ([]byte, error) {
 			}
 			return res, nil
 		}
-		err = h.Cache.Put(id, key, res, maxage)
+		err = h.Cache.Put(id, h.Name+"/"+key, res, maxage)
 		if err != nil {
 			if h.Log != nil {
 				h.Log.Print(err)
@@ -310,50 +322,6 @@ func (h Handler) Get(key string) ([]byte, error) {
 		}
 	}
 	return res, nil
-}
-
-// UGet attempts to retrieve a value from the user session instead of the running
-// server session when a user id has been registered.
-//
-// A segregated user data store  allows to make the distinction between navigation sessions
-// which are transient and can be regenerated and the user session (which could
-// traditionally be stored fully in-database). The advantage is that one user
-// can potentially be tied to multiple concurrent  navigation sessions such as
-// whren browsing from different devices or in a multi-tenant account.
-func (h Handler) UGet(key string) ([]byte, error) {
-	if h.Store == nil {
-		return nil, ErrBadStorage
-	}
-	id, err := h.UID()
-	if err != nil {
-		return nil, err
-	}
-	if h.Cache != nil {
-		res, err := h.Cache.Get(id, key)
-		if err == nil {
-			return res, err
-		}
-	}
-	res, err := h.Store.Get(id, key)
-	if err != nil {
-		return nil, err
-	}
-	if h.Cache != nil {
-		maxage, err := h.Store.TimeToExpiry(id, key)
-		if err != nil {
-			if h.Log != nil {
-				h.Log.Print(err)
-			}
-			return res, nil
-		}
-		err = h.Cache.Put(id, key, res, maxage)
-		if err != nil {
-			if h.Log != nil {
-				h.Log.Print(err)
-			}
-		}
-	}
-	return res, err
 }
 
 // Put will save a key/value pair in the session store (preferentially).
@@ -367,19 +335,30 @@ func (h Handler) Put(key string, value []byte, maxage time.Duration) error {
 	}
 
 	if h.Store != nil {
-		_, err := h.Store.Get(id, sessionValidityKey)
+		_, err := h.Store.Get(id, h.Name+"/"+sessionValidityKey)
 		if err != nil {
 			return ErrBadSession.Wraps(err)
 		}
 
-		err = h.Store.Put(id, key, value, maxage)
+		err = h.Store.Put(id, h.Name+"/"+key, value, maxage)
 		if err != nil {
 			return err
 		}
+		// let's touch the session
+		h.Cookie.Touch()
+		if h.Cookie.HttpCookie.MaxAge > 0 {
+			err = h.Store.Put(id, h.Name+"/"+sessionValidityKey, []byte("true"), time.Duration(h.Cookie.HttpCookie.MaxAge))
+			if err != nil {
+				if h.Log != nil {
+					h.Log.Print(err)
+				}
+			}
+		}
+
 		if h.Cache == nil {
 			return nil
 		}
-		err = h.Cache.Put(id, key, value, maxage)
+		err = h.Cache.Put(id, h.Name+"/"+key, value, maxage)
 		if err != nil {
 			if h.Log != nil {
 				h.Log.Println(err)
@@ -388,45 +367,28 @@ func (h Handler) Put(key string, value []byte, maxage time.Duration) error {
 		return nil
 	}
 
+	if h.ServerOnly {
+		panic(errors.New("error: serveronly session with no server storage").Error())
+	}
+
 	h.Cookie.Set(key, string(value), maxage)
 
+	// Let's touch the session
+	if key != sessionValidityKey {
+		h.Cookie.Touch()
+	}
+
 	if h.Cache == nil {
 		return nil
 	}
 
-	err := h.Cache.Put(id, key, value, maxage)
+	err := h.Cache.Put(id, h.Name+"/"+key, value, maxage)
 	if err != nil {
 		if h.Log != nil {
 			h.Log.Println(err)
 		}
 	}
 
-	return nil
-}
-
-// UPut is used to store a value in user global storage if it exists, as opposed
-// to the navigation session storage which is transient.
-func (h Handler) UPut(key string, value []byte, maxage time.Duration) error {
-	if h.Store == nil {
-		return ErrBadStorage
-	}
-	id, err := h.UID()
-	if err != nil {
-		return err
-	}
-	err = h.Store.Put(id, key, value, 0) // maxage is 0. value should be persisted
-	if err != nil {
-		return err
-	}
-	if h.Cache == nil {
-		return nil
-	}
-	err = h.Cache.Put(id, key, value, maxage)
-	if err != nil {
-		if h.Log != nil {
-			h.Log.Println(err)
-		}
-	}
 	return nil
 }
 
@@ -438,7 +400,7 @@ func (h Handler) Delete(key string) error {
 	}
 
 	if h.Cache == nil {
-		err := h.Cache.Delete(id, key) // Attempt to delete a value from cache MUST succeed.
+		err := h.Cache.Delete(id, h.Name+"/"+key) // Attempt to delete a value from cache MUST succeed.
 		if err != nil {
 			if h.Log != nil {
 				h.Log.Println(err)
@@ -446,117 +408,166 @@ func (h Handler) Delete(key string) error {
 		}
 	}
 	if h.Store != nil {
-		_, err := h.Store.Get(id, sessionValidityKey)
+		_, err := h.Store.Get(id, h.Name+"/"+sessionValidityKey)
 		if err != nil {
 			return nil // the session is invalid anyway.
 		}
-		return h.Store.Delete(id, key)
+
+		err = h.Store.Delete(id, h.Name+"/"+key)
+		if err != nil {
+			return err
+		}
+
+		err = h.Touch()
+		if err != nil {
+			if h.Log != nil {
+				h.Log.Print(err)
+			}
+		}
+		// attempt to touch the session
+		if h.Cookie.HttpCookie.MaxAge > 0 {
+			err = h.Store.Put(id, h.Name+"/"+sessionValidityKey, []byte("true"), time.Duration(h.Cookie.HttpCookie.MaxAge))
+			if err != nil {
+				if h.Log != nil {
+					h.Log.Print(err)
+				}
+			}
+		}
+		return nil
 	}
+	if h.ServerOnly {
+		panic(errors.New("error: serveronly session with no server storage").Error())
+	}
+
 	h.Cookie.Delete(key)
+
+	err := h.Touch()
+	if err != nil {
+		if h.Log != nil {
+			h.Log.Print(err)
+		}
+	}
+
 	return nil
 }
 
-// UDelete is used to remove a value from global user session storage.
-func (h Handler) UDelete(key string) error {
-	if h.Store == nil {
-		return ErrBadStorage
-	}
-	id, err := h.UID()
-	if err != nil {
-		return err
-	}
-
-	if h.Cache == nil {
-		err := h.Cache.Delete(id, key) // Attempt to delete a value from cache MUST succeed.
-		if err != nil {
-			if h.Log != nil {
-				h.Log.Println(err)
-			}
-		}
-	}
-	return h.Store.Delete(id, key)
-
+func (h Handler) loaded(ctx context.Context) bool {
+	_, ok := ctx.Value(h.ContextKey).(http.Cookie)
+	return ok
 }
 
-// Load attempts to find the latest version of the session cookie that will be set
-// in the response.
-func (h *Handler) Load(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
-	if h.Parent != nil {
-		_, err := h.Parent.Load(ctx, res, req)
-		if err != nil {
-			return context.WithValue(ctx, h.ContextKey, ErrParentInvalid), ErrParentInvalid.Wraps(err)
-		}
+// loadFromCookie recovers the session data from the session cookie sent by the client or,
+// if already called before, attempts to find the latest version of the session
+// cookie that will have been saved by using the Save method.
+func (h Handler) loadCookie(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
+
+	// Let's try to load a session cookie value from the request
+	reqc, err := req.Cookie(h.Name)
+	if err != nil {
+		// at this point, should generate a new session since there is no session cookie
+		// sent by the client.
+		return context.WithValue(ctx, h.ContextKey, ErrBadSession), ErrBadSession.Wraps(err)
 	}
-	c, ok := ctx.Value(h.ContextKey).(http.Cookie)
-	if !ok {
-		// in this case, there is no session cookie already set;
-		// perhaps the session got modified in flight but the cookie was never set (let's log for this)
-		// We try to retrieve a session cookie from the request.
 
-		// in case the session is reloaded during requets handling but the session cookies has not been set
-		if h.Cookie.ApplyMods.IsTrue() {
-			if h.Log != nil {
-				h.Log.Print("session cookie got modifications that have not been persisted by setting a http cookie")
-			}
+	err = h.Cookie.Decode(*reqc)
+	if err != nil {
+		if h.Log != nil {
+			h.Log.Println(errors.New("Bad cookie").Wraps(err))
 		}
+		return context.WithValue(ctx, h.ContextKey, ErrBadCookie), ErrBadCookie.Wraps(err)
+	}
+	h.Cookie.ApplyMods.Set(false)
 
-		// Let's try to load a session cookie value from the request
-		reqc, err := req.Cookie(h.Name)
-		if err != nil {
-			// at this point, should generate a new session since there is no session cookie
-			// sent by the client.
-			return context.WithValue(ctx, h.ContextKey, ErrBadSession), ErrBadSession.Wraps(err)
-		}
-		err = h.Cookie.Decode(*reqc)
-		if err != nil {
-			if h.Log != nil {
-				h.Log.Println(errors.New("Bad cookie").Wraps(err))
-			}
-			return context.WithValue(ctx, h.ContextKey, ErrBadCookie), ErrBadCookie.Wraps(err)
-		}
-		h.Cookie.ApplyMods.Set(false)
-		// TODO
-		// steps:  a) load cookie b)  retrieve session id c) verify session state server-side (means that a value should be stored server side when generating session)
+	if h.Store != nil {
 		_, err = h.Get(sessionValidityKey)
 		if err != nil {
 			return context.WithValue(ctx, h.ContextKey, ErrBadSession), ErrBadSession.Wraps(err)
 		}
+	}
 
-		return context.WithValue(ctx, h.ContextKey, *(h.Cookie.HttpCookie)), nil
-	}
-	err := h.Cookie.Decode(c)
-	if err != nil {
-		return ctx, errors.New("couldn't load session cookie").Wraps(err)
-	}
-	return ctx, nil
+	return context.WithValue(ctx, h.ContextKey, *(h.Cookie.HttpCookie)), nil
 }
 
-// SetSessionCookie will modify and keep the session data in the per-request context store.
+func (h *Handler) Load(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
+	if h.loaded(ctx) {
+		return ctx, nil
+	}
+
+	p, err := h.Parent()
+	if err == nil {
+
+		if !p.loaded(ctx) {
+			return ctx, ErrParentInvalid
+		}
+
+		pid, err := p.ID()
+		if err != nil {
+			return ctx, ErrParentInvalid.Wraps(err)
+		}
+
+		if !h.ServerOnly {
+			ctx, err = h.loadCookie(ctx, res, req)
+			if err != nil {
+				return ctx, err
+			}
+		}
+
+		_, err = h.ID()
+		if err != nil {
+			return ctx, ErrNoID
+		}
+		_, err = h.Get(sessionValidityKey)
+		if err != nil {
+			return ctx, ErrBadSession.Wraps(err)
+		}
+
+		psid, err := h.Get(p.Name + "/id")
+		if err != nil {
+			return ctx, ErrParentInvalid.Wraps(err)
+		}
+		if pid != string(psid) {
+			return ctx, ErrParentInvalid.Wraps(errors.New("session parent was loaded but session parent id is not matching with id stored in its spawn. "))
+		}
+		return h.Save(ctx, res, req)
+	}
+	// if session has no parent
+	if !h.ServerOnly {
+		return h.loadCookie(ctx, res, req)
+	}
+	_, err = h.ID()
+	if err != nil {
+		return ctx, ErrNoID
+	}
+	_, err = h.Get(sessionValidityKey)
+	if err != nil {
+		return ctx, ErrBadSession.Wraps(err)
+	}
+	return h.Save(ctx, res, req)
+}
+
+// Save will modify and keep the session data in the per-request context store.
 // It needs to be called to apply session data changes.
 // These changes entail a modification in the value of the session cookie.
 // The session cookie is stored in the context.Context non-encoded.
 // Not safe for concurrent use by multiple goroutines.
-func (h *Handler) SetSessionCookie(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
+func (h *Handler) Save(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
 	hc, err := h.Cookie.Encode()
 	if err != nil {
 		return ctx, err
 	}
-	http.SetCookie(res, &hc)
+	if !h.ServerOnly {
+		http.SetCookie(res, &hc)
+	}
 	h.Cookie.ApplyMods.Set(false)
 	return context.WithValue(ctx, h.ContextKey, hc), nil
 }
 
-// Generate creates a completely new session.
+// Generate creates a completely new session. with a new generated id.
 func (h *Handler) Generate(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
 	// 1. Create UUID
 	id, err := h.uuidgen()
 	if err != nil {
 		return ctx, err
-	}
-
-	err = h.Put(sessionValidityKey, []byte("true"), time.Duration(h.Cookie.HttpCookie.MaxAge))
-	if err != nil {
-		return ctx, errors.New("Failed to generate new session.").Wraps(err)
 	}
 
 	// 2. Update session cookie
@@ -566,21 +577,176 @@ func (h *Handler) Generate(ctx context.Context, res http.ResponseWriter, req *ht
 	h.Cookie.SetID(id)
 	h.Cookie.ApplyMods.Set(true)
 
-	return h.SetSessionCookie(ctx, res, req)
+	// 3.  Establish the session on the server if server storage is available
+	err = h.Put(sessionValidityKey, []byte("true"), time.Duration(h.Cookie.HttpCookie.MaxAge))
+	if err != nil {
+		return ctx, errors.New("Failed to generate new session.").Wraps(err)
+	}
+
+	p, err := h.Parent()
+	if err == nil {
+		err = h.Put(p.Name+"/id", []byte(id), 0)
+		if err != nil {
+			return ctx, err
+		}
+		err = p.Put(h.Name+"/"+id, Info(res, req).ToJSON(), 0)
+	}
+
+	return h.Save(ctx, res, req)
 }
 
-// Spawn returns an handler for a subsession, that is, a dependent session.
-func (h *Handler) Spawn(name string, options ...func(Handler) Handler) Handler {
+// Load is used to load a session which is only known server-side. (serve-only)
+func LoadServerOnly(ctx context.Context, id string, h *Handler) (context.Context, error) {
+	if !h.ServerOnly || h.Store == nil {
+		return ctx, errors.New("Unable to load server session. Session Handler parameters are incorrect")
+	}
+
+	if h.loaded(ctx) {
+		sid, err := h.ID()
+		if err != nil {
+			goto load
+		}
+		if sid != id {
+			goto load
+		}
+		return ctx, nil
+	}
+
+load:
+	h.SetID(id)
+
+	p, err := h.Parent()
+	if err == nil {
+
+		if !p.loaded(ctx) {
+			return ctx, ErrParentInvalid
+		}
+
+		pid, err := p.ID()
+		if err != nil {
+			return ctx, ErrParentInvalid.Wraps(err)
+		}
+
+		_, err = h.Get(sessionValidityKey)
+		if err != nil {
+			return ctx, ErrBadSession.Wraps(err)
+		}
+
+		psid, err := h.Get(p.Name + "/id")
+		if err != nil {
+			return ctx, ErrParentInvalid.Wraps(err)
+		}
+		if pid != string(psid) {
+			return ctx, ErrParentInvalid.Wraps(errors.New("session parent was loaded but session parent id is not matching with id stored in its spawn. "))
+		}
+		hc, err := h.Cookie.Encode()
+		if err != nil {
+			return ctx, err
+		}
+		h.Cookie.ApplyMods.Set(false)
+		return context.WithValue(ctx, h.ContextKey, hc), nil
+	}
+	// if session has no parent
+	_, err = h.Get(sessionValidityKey)
+	if err != nil {
+		return ctx, ErrBadSession.Wraps(err)
+	}
+	hc, err := h.Cookie.Encode()
+	if err != nil {
+		return ctx, err
+	}
+	h.Cookie.ApplyMods.Set(false)
+	return context.WithValue(ctx, h.ContextKey, hc), nil
+}
+
+// Generate will create and load in context.Context a new server-only session
+// for a provided id if it does not already exist
+func GenerateServerOnly(ctx context.Context, id string, h *Handler) (context.Context, error) {
+	h.SetID(id)
+	_, err := h.Get(sessionValidityKey)
+	if err == nil {
+		return ctx, errors.New("Session does already exist.")
+	}
+	err = h.Put(sessionValidityKey, []byte("true"), time.Duration(h.Cookie.HttpCookie.MaxAge))
+	if err != nil {
+		return ctx, err
+	}
+	hc, err := h.Cookie.Encode()
+	if err != nil {
+		return ctx, err
+	}
+	h.Cookie.ApplyMods.Set(false)
+	return context.WithValue(ctx, h.ContextKey, hc), nil
+}
+
+// Spawn returns a handler for a subsession, that is, a dependent session.
+func (h Handler) Spawn(name string, options ...func(Handler) Handler) Handler {
 	sh := New(name, h.Secret, options...)
-	sh.ID()
-	sh.Parent = h
+	sh.parent = &h
 	return sh
+}
+
+// Spawned links to session into a Parent-Spawn dependent relationship.
+// A session cannot spawn itself (i.e. session names have to be different).
+func (h Handler) Spawned(s Handler) Handler {
+	if h.Name != s.Name {
+		s.parent = &h
+	}
+	return s
+}
+
+// Parent returns an unitialized copy of the handler of a Parent session if
+// the aforementionned exists.
+// To use a Parent session,the Load method should be called first.
+func (h Handler) Parent() (Handler, error) {
+	if h.parent != nil {
+		res := *h.parent
+		return res, nil
+	}
+	return h, ErrParentInvalid
 }
 
 // Revoke revokes the current session.
 func (h Handler) Revoke() error {
+	id, err := h.ID()
+	if err != nil {
+		return errors.New("Unable to revoke session. Could not retrieve session ID").Wraps(err)
+	}
 	h.Cookie.Expire()
-	return h.Delete(sessionValidityKey)
+	err = h.Delete(sessionValidityKey)
+	if err != nil {
+		return err
+	}
+	p, err := h.Parent()
+	if err != nil {
+		return nil
+	}
+	pid, err := h.Get(p.Name + "/id")
+	if err != nil {
+		if h.Log != nil {
+			h.Log.Print(errors.New("Unable to recover parent session id for revocation.").Wraps(err))
+		}
+		return errors.New("Unable to recover parent session id for revocation.").Wraps(err)
+	}
+	p.SetID(string(pid))
+	err = p.Delete(h.Name + "/" + id)
+	if h.Log != nil {
+		h.Log.Print(err)
+	}
+	return nil // we could return the error but it's not mandatory... we'll cleanup the parent session later.
+}
+
+func (h Handler) Touch() error {
+	// sends the signal to send a session cvookie back to the client to renew
+	if !h.ServerOnly {
+		h.Cookie.Touch()
+		return nil
+	}
+
+	if h.Cookie.HttpCookie.MaxAge > 0 {
+		return h.Put(sessionValidityKey, []byte("true"), time.Duration(h.Cookie.HttpCookie.MaxAge))
+	}
+	return nil
 }
 
 // ServeHTTP effectively makes the session a xhttp request handler.
@@ -597,7 +763,7 @@ func (h Handler) ServeHTTP(ctx context.Context, res http.ResponseWriter, req *ht
 			return
 		}
 	}
-	c, err = h.SetSessionCookie(c, res, req)
+	c, err = h.Save(c, res, req)
 	if err != nil {
 		http.Error(res, "Unable to set session cookie", http.StatusInternalServerError)
 		return
@@ -612,6 +778,28 @@ func (h Handler) ServeHTTP(ctx context.Context, res http.ResponseWriter, req *ht
 func (h Handler) Link(hn xhttp.Handler) xhttp.HandlerLinker {
 	h.next = hn
 	return h
+}
+
+type Metadata struct {
+	Start     time.Time `json:"start"`
+	UserAgent string    `json:"useragent"`
+	IPAddress string    `json:"ipaddress"`
+}
+
+func (m Metadata) ToJSON() []byte {
+	b, err := json.Marshal(m)
+	if err != nil {
+		panic(err) // should never happen unless we change the Metadata type  definition
+	}
+	return b
+}
+
+func Info(w http.ResponseWriter, r *http.Request) Metadata {
+	m := Metadata{}
+	m.Start = time.Now().UTC()
+	m.UserAgent = r.UserAgent()
+	m.IPAddress = r.RemoteAddr
+	return m
 }
 
 // Enforce return a handler whose purpose is tom make sure that the sessions are
@@ -721,7 +909,7 @@ func (o Ordered) Load(ctx context.Context, res http.ResponseWriter, req *http.Re
 	return ctx, errors.New("No session to load")
 }
 
-// todo create a SetSessionCookie method for Ordered sessions
+// todo create a Save method for Ordered sessions
 
 // ServeHTTP effectively makes the session a xhttp request handler.
 func (o Ordered) ServeHTTP(ctx context.Context, res http.ResponseWriter, req *http.Request) {
@@ -832,17 +1020,17 @@ func (o Grouped) Load(ctx context.Context, res http.ResponseWriter, req *http.Re
 	return ctx, nil
 }
 
-// SetSessionCookie will update and keep the session data in the per-request context store.
+// Save will update and keep the session data in the per-request context store.
 // It needs to be called to apply session data changes.
 // These changes entail a modification in the value of the  relevant session cookie.
 // Not safe for concurrent use by multiple goroutines.
-func (o Grouped) SetSessionCookie(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
+func (o Grouped) Save(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
 	if o.Handlers == nil {
 		return ctx, nil
 	}
 	for k, v := range o.Handlers {
 		if ctx.Value(k) != nil {
-			return v.SetSessionCookie(ctx, res, req)
+			return v.Save(ctx, res, req)
 		}
 		return ctx, nil
 	}

@@ -41,7 +41,6 @@ type Handler struct {
 func NewHandler(name string, secret string, options ...func(Handler) Handler) Handler {
 	h := Handler{}
 	h.Session = session.New(name, secret)
-	h.Session.CachingEnabled.Set(false)
 
 	h.Header = "X-CSRF-TOKEN"
 
@@ -75,7 +74,7 @@ func (h Handler) generateToken(ctx context.Context, res http.ResponseWriter, req
 		http.Error(res, "Storing new CSRF Token in session failed", 503)
 		return ctx, err
 	}
-	return h.Session.SetSessionCookie(ctx, res, req)
+	return h.Session.Save(ctx, res, req)
 }
 
 // CtxToken returns the encoded session value of a csrf token.
