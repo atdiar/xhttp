@@ -63,7 +63,7 @@ func (l Authentifier) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *h
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	err = l.Session.Put("oauthstate", ([]byte)(state), 10*time.Minute)
+	err = l.Session.Put(ctx, "oauthstate", ([]byte)(state), 10*time.Minute)
 	if err != nil {
 		if l.Log != nil {
 			l.Log.Printf("Error saving oauth state variable into session: %v", err)
@@ -78,7 +78,7 @@ func (l Authentifier) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *h
 
 // ServeHTTP handles the request.
 func (c CallbackHandler) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
-	rawstate, err := c.authentifier.Session.Get("oauthstate")
+	rawstate, err := c.authentifier.Session.Get(ctx,"oauthstate")
 	if err != nil {
 		if c.authentifier.Log != nil {
 			c.authentifier.Log.Printf("Error recovering oauth state variable: %v", err)
@@ -86,7 +86,7 @@ func (c CallbackHandler) ServeHTTP(ctx context.Context, w http.ResponseWriter, r
 		http.Error(w, "XOAUTH2:unable to recover authentication state", http.StatusInternalServerError)
 		return
 	}
-	c.authentifier.Session.Delete("oauthstate")
+	c.authentifier.Session.Delete(ctx, "oauthstate")
 	state := string(rawstate)
 	if r.FormValue("state") != state {
 		if c.authentifier.Log != nil {

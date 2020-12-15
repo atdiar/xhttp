@@ -77,7 +77,7 @@ func AssignRoleToUserFn(s session.Handler) func(context.Context, http.ResponseWr
 			return ctx, err
 		}
 
-		b2, err := s.Get(r.UID)
+		b2, err := s.Get(ctx, r.UID)
 		if err == nil {
 			storedRole := new(Role)
 			err = json.Unmarshal(b2, storedRole)
@@ -89,7 +89,7 @@ func AssignRoleToUserFn(s session.Handler) func(context.Context, http.ResponseWr
 			}
 			return ctx, errors.New("UNABLE TO ASSIGN ROLE. ROLE ID ALREADY EXISTS FOR THIS USER ")
 		}
-		err = s.Put(r.UID, b, r.Duration)
+		err = s.Put(ctx, r.UID, b, r.Duration)
 		if err != nil {
 			return ctx, err
 		}
@@ -111,7 +111,7 @@ func AssertUserHasRoleFn(s session.Handler) func(context.Context, http.ResponseW
 			return ctx, errors.New("unable to retrieve session in order to check user roles.").Wraps(err)
 		}
 
-		b2, err := s.Get(r.UID)
+		b2, err := s.Get(ctx, r.UID)
 		if err != nil {
 			return ctx, err
 		}

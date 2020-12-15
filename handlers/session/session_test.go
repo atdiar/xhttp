@@ -42,7 +42,7 @@ func Multiplexer(t *testing.T) (xhttp.ServeMux, Handler) {
 			t.Errorf("Expected an id of %v but it is %v as we're getting %v \n Cookie maxage is %v ", fakeSessionID, ok, id, s.Cookie.HttpCookie.MaxAge)
 		}
 
-		s.Put("test", []byte("test"), 86400*time.Minute)
+		s.Put(ctx,"test", []byte("test"), 86400*time.Minute)
 		s.Save(ctx, res, req)
 
 		res.Write([]byte(id))
@@ -116,7 +116,7 @@ func TestSession(t *testing.T) {
 		t.Error(err)
 	}
 
-	bstr, err := sess.Get("test")
+	bstr, err := sess.Get(context.Background(),"test")
 
 	if err != nil {
 		t.Fatal("unable to retrieve new item put in the session cookie under the key <<test>>", err)

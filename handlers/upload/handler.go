@@ -105,22 +105,12 @@ func (h Handler) ParseUpload(ctx context.Context, w http.ResponseWriter, r *http
 		p, err := reader.NextPart()
 		if err != nil {
 			if err != io.EOF {
-				if err := onerror.Cancel(); err != nil {
-					if h.Log != nil {
-						h.Log.Print(err)
-					}
-				}
 				return ParseResult{f, onerror}, ErrParsingFailed.Wraps(err)
 			}
 			for j := fieldIndex; j < len(f); j++ {
 				if !f[fieldIndex].Required {
 					continue
 				} else {
-					if err := onerror.Cancel(); err != nil {
-						if h.Log != nil {
-							h.Log.Print(err)
-						}
-					}
 					return ParseResult{f, onerror}, ErrClientFormInvalid.Wraps(errors.New("upload form sent is missing a required field: " + f[fieldIndex].Name))
 				}
 			}
@@ -129,11 +119,6 @@ func (h Handler) ParseUpload(ctx context.Context, w http.ResponseWriter, r *http
 
 		contentDisposition, _, _ := mime.ParseMediaType(p.Header.Get("Content-Disposition"))
 		if contentDisposition != "form-data" {
-			if err := onerror.Cancel(); err != nil {
-				if h.Log != nil {
-					h.Log.Print(err)
-				}
-			}
 			return ParseResult{f, onerror}, ErrClientFormInvalid.Wraps(errors.New("Submitted form has bad formatting. Expecting Content-Disposition Header to be form-data for each part."))
 		}
 
@@ -177,11 +162,6 @@ func (h Handler) ParseUpload(ctx context.Context, w http.ResponseWriter, r *http
 				f[fieldIndex].ContentType = contentType
 			}
 			if !f[fieldIndex].AllowedContentTypes.Contains(contentType, false) {
-				if err := onerror.Cancel(); err != nil {
-					if h.Log != nil {
-						h.Log.Print(err)
-					}
-				}
 				return ParseResult{f, onerror}, ErrClientFormInvalid.Wraps(ErrBadContentType)
 			}
 			f[fieldIndex].ContentType = contentType
@@ -191,11 +171,6 @@ func (h Handler) ParseUpload(ctx context.Context, w http.ResponseWriter, r *http
 			// multipart message comprised of different files.
 			if contentType == "multipart/mixed" {
 				if _, ok := params2["boundary"]; !ok {
-					if err := onerror.Cancel(); err != nil {
-						if h.Log != nil {
-							h.Log.Print(err)
-						}
-					}
 					return ParseResult{f, onerror}, ErrParsingFailed.Wraps(ErrNoBoundary)
 				}
 				freader := multipart.NewReader(p, params2["boundary"])
@@ -207,11 +182,6 @@ func (h Handler) ParseUpload(ctx context.Context, w http.ResponseWriter, r *http
 					if err != nil {
 						if err == io.EOF {
 							break
-						}
-						if err := onerror.Cancel(); err != nil {
-							if h.Log != nil {
-								h.Log.Print(err)
-							}
 						}
 						return ParseResult{nil, onerror}, ErrParsingFailed.Wraps(err)
 					}
@@ -228,42 +198,22 @@ func (h Handler) ParseUpload(ctx context.Context, w http.ResponseWriter, r *http
 					}
 					// See if the content-type is supported
 					if !f[fieldIndex].AllowedContentTypes.Contains(contentType, false) || ct == "multipart/mixed" {
-						if err := onerror.Cancel(); err != nil {
-							if h.Log != nil {
-								h.Log.Print(err)
-							}
-						}
 						return ParseResult{nil, onerror}, ErrBadContentType
 					}
 					// create a new file , populate it, and add it to the filelist
 
 					obj := NewFile(io.LimitReader(q, remainingSize), q.FileName(), ct, uploaderid, f[fieldIndex].Path)
-					id, err := h.IDgenerator()
+					id, err := h.FileIDgenerator()
 					if err != nil {
-						if err := onerror.Cancel(); err != nil {
-							if h.Log != nil {
-								h.Log.Print(err)
-							}
-						}
 						return ParseResult{nil, onerror}, ErrUploadingFailed.Wraps(errors.New("Unable to generate unique id for the upload file. Operation aborted")) // todo see if we could just skip the failing parts and retry perhaps
 					}
 					obj.FileUUID = id
 					if f[fieldIndex].upload == nil {
-						if err := onerror.Cancel(); err != nil {
-							if h.Log != nil {
-								h.Log.Print(err)
-							}
-						}
 						return ParseResult{nil, onerror}, ErrServerFormInvalid.Wraps(errors.New("Field initialization error. Lacking the upload function."))
 					}
 					// upload
 					n, cancel, err := f[fieldIndex].upload(ctx, obj) // todo cancel function needs to be saved somewhere like to)p level slice of cancelfunction
 					if err != nil {
-						if err := onerror.Cancel(); err != nil {
-							if h.Log != nil {
-								h.Log.Print(err)
-							}
-						} // todo log the result of this in case the cancelation did not go completely through
 						return ParseResult{nil, onerror}, ErrUploadingFailed.Wraps(err)
 					}
 					onerror.Add(cancel)
@@ -272,21 +222,11 @@ func (h Handler) ParseUpload(ctx context.Context, w http.ResponseWriter, r *http
 
 					remainingSize -= n
 					if remainingSize < 0 {
-						if err := onerror.Cancel(); err != nil {
-							if h.Log != nil {
-								h.Log.Print(err)
-							}
-						}
 						return ParseResult{nil, onerror}, ErrUploadTooLarge.Wraps(errors.New("Total upload size limited to: " + strconv.Itoa(int(f[fieldIndex].SizeLimit))))
 					}
 					s := make([]byte, 1)
 					c, _ := q.Read(s)
 					if c != 0 {
-						if err := onerror.Cancel(); err != nil {
-							if h.Log != nil {
-								h.Log.Print(err)
-							}
-						}
 						return ParseResult{nil, onerror}, ErrUploadTooLarge.Wraps(errors.New("Total upload size limited to: " + strconv.Itoa(int(f[fieldIndex].SizeLimit))))
 					}
 				}
@@ -294,7 +234,7 @@ func (h Handler) ParseUpload(ctx context.Context, w http.ResponseWriter, r *http
 				pr := io.LimitReader(p, f[fieldIndex].SizeLimit)
 				if f[fieldIndex].Files != nil {
 					obj := NewFile(pr, filenameIfExists, contentType, uploaderid, f[fieldIndex].Path)
-					id, err := h.IDgenerator()
+					id, err := h.FileIDgenerator()
 					if err != nil {
 						return ParseResult{nil, onerror}, ErrUploadingFailed.Wraps(errors.New("Unable to generate unique id for the upload file. Operation aborted"))
 					}
@@ -336,11 +276,6 @@ func (h Handler) ParseUpload(ctx context.Context, w http.ResponseWriter, r *http
 			// Let's apply the validators
 			ok, err := f[fieldIndex].IsValid()
 			if !ok {
-				if err := onerror.Cancel(); err != nil {
-					if h.Log != nil {
-						h.Log.Print(err)
-					}
-				}
 				return ParseResult{nil, onerror}, err
 			}
 		}
@@ -358,9 +293,12 @@ func (h Handler) ParseUpload(ctx context.Context, w http.ResponseWriter, r *http
 // It holds the form filled from the parsed data and a ffunction that can be used
 // to try and  rollback the file uploads. (for instance in case registering the
 // file data in the database failed, one could decide to rollback the file storage)
+// Canceling/rolling back an upload should be idemptotent.
+// Means that each file uploads returning a cancelation function should return
+// an idempotent one.
 type ParseResult struct {
-	Form     Form
-	Rollback *canceler
+	Form Form
+	*canceler
 }
 
 type canceler struct {
@@ -431,7 +369,7 @@ func NewField(name string, sizelimit int, required bool, AcceptedContentTypes ..
 // NewFileField is used to create the specification for a file upload form field
 //  with constraints that the client should adhere to and that the request parser
 // will verify.
-func NewFileField(name string, sizelimit int, required bool, multiple bool, storagepath string, uploadFn func(context.Context, Object) (int64, func() error, error), AcceptedContentTypes ...string) Field {
+func NewFileField(name string, sizelimit int, required bool, multiple bool, storagepath string, uploadFn func(context.Context, Object) (bytesuploaded int64, rollbackFn func() error, err error), AcceptedContentTypes ...string) Field {
 	var l int
 	act := newSet().Add(AcceptedContentTypes...)
 	if multiple {
@@ -508,11 +446,11 @@ type Handler struct {
 
 	Path string
 
-	IDgenerator func() (string, error) // used to generate a file unique identifier
+	FileIDgenerator func() (string, error) // used to generate a file unique identifier
 
 	Log *log.Logger
 
-	ctxKey *contextKey
+	ctxKey contextKey
 
 	next xhttp.Handler
 }
@@ -521,7 +459,7 @@ type Handler struct {
 // try and retrieve values if the structure of the request fits the expected
 // model defined in an upload Form.
 func New(f Form, s session.Handler, uploadpath string, fileUUIDgenerator func() (string, error)) Handler {
-	return Handler{f, s, uploadpath, fileUUIDgenerator, nil, new(contextKey), nil}
+	return Handler{f, s, uploadpath, fileUUIDgenerator, nil, contextKey{}, nil}
 }
 
 // WithLogger enables logging capabilities. Typically for logging errors. such as
@@ -570,10 +508,10 @@ func (h Handler) Link(hn xhttp.Handler) xhttp.HandlerLinker {
 	return h
 }
 
-// RetrieveForm attempts to retrieve the results obtained after an upload request
+// ParseResults attempts to retrieve the results obtained after an upload request
 // has been parsed.
-func (h Handler) RetrieveForm(ctx context.Context) (ParseResult, bool) {
-	p, ok := ctx.Value(h.ctxKey).(ParseResult)
+func ParseResults(ctx context.Context) (ParseResult, bool) {
+	p, ok := ctx.Value(contextKey{}).(ParseResult)
 	return p, ok
 }
 

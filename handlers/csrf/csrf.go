@@ -68,7 +68,7 @@ func (h Handler) generateToken(ctx context.Context, res http.ResponseWriter, req
 	// First we replace the session cookie by the anti-CSRF cookie
 	// That will ensure that on Session Save, the anti-CSRF is registered in the
 	// http response header.
-	err = h.Session.Put(h.Session.Name, []byte(tok), 0)
+	err = h.Session.Put(ctx, h.Session.Name, []byte(tok), 0)
 
 	if err != nil {
 		http.Error(res, "Storing new CSRF Token in session failed", 503)

@@ -58,9 +58,9 @@ var ContextKey contextKey
 // It should be made safe for concurrent use by multiple goroutines as every
 // session will most often share only one cache.
 type Cache interface {
-	Get(id, hkey string) (res []byte, err error)
-	Put(id string, hkey string, content []byte, maxage time.Duration) error
-	Delete(id, hkey string) error
+	Get(ctx context.Context, id string, hkey string) (res []byte, err error)
+	Put(ctx context.Context, id string, hkey string, content []byte, maxage time.Duration) error
+	Delete(ctx context.Context, id string, hkey string) error
 	Clear() error
 	ClearAfter(t time.Duration) error
 }
@@ -73,10 +73,10 @@ type Cache interface {
 // if t < 0, the key/session should expire immediately.
 // if t = 0, the key/session has no set expiry.
 type Store interface {
-	Get(id, hkey string) (res []byte, err error)
-	Put(id string, hkey string, content []byte, maxage time.Duration) error
-	Delete(id, hkey string) error
-	TimeToExpiry(id string, hkey string) (time.Duration, error)
+	Get(ctx context.Context, id string, hkey string) (res []byte, err error)
+	Put(ctx context.Context, id string, hkey string, content []byte, maxage time.Duration) error
+	Delete(ctx context.Context, id string, hkey string) error
+	TimeToExpiry(ctx context.Context, id string, hkey string) (time.Duration, error)
 }
 
 // Interface defines a common interface for objects that are used for session
@@ -84,9 +84,9 @@ type Store interface {
 type Interface interface {
 	ID() (string, error)
 	SetID(string)
-	Get(string) ([]byte, error)
-	Put(key string, value []byte, maxage time.Duration) error
-	Delete(key string) error
+	Get(context.Context, string) ([]byte, error)
+	Put(ctx context.Context, key string, value []byte, maxage time.Duration) error
+	Delete(ctx context.Context, key string) error
 	Load(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error)
 	Save(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error)
 	Generate(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error)
@@ -243,45 +243,45 @@ func (h Handler) SetID(id string) {
 
 // Get will retrieve the value corresponding to a given store key from
 // the session.
-func (h Handler) Get(key string) ([]byte, error) {
+func (h Handler) Get(ctx context.Context, key string) ([]byte, error) {
 	id, ok := h.Cookie.ID()
 	if !ok {
 		return nil, ErrNoID
 	}
 
 	if h.Cache != nil {
-		res, err := h.Cache.Get(id, h.Name+"/"+key)
+		res, err := h.Cache.Get(ctx, id, h.Name+"/"+key)
 		if err == nil {
 			return res, err
 		}
 	}
 
 	if h.Store != nil {
-		_, err := h.Store.Get(id, h.Name+"/"+sessionValidityKey)
+		_, err := h.Store.Get(ctx, id, h.Name+"/"+sessionValidityKey)
 		if err != nil {
 			return nil, ErrBadSession.Wraps(err)
 		}
 		// let's touch the session
-		err = h.Touch()
+		err = h.Touch(ctx)
 		if err != nil {
 			if h.Log != nil {
 				h.Log.Print(err)
 			}
 		}
 
-		res, err := h.Store.Get(id, h.Name+"/"+key)
+		res, err := h.Store.Get(ctx, id, h.Name+"/"+key)
 		if err != nil {
 			return nil, err
 		}
 		if h.Cache != nil {
-			maxage, err := h.Store.TimeToExpiry(id, h.Name+"/"+key)
+			maxage, err := h.Store.TimeToExpiry(ctx, id, h.Name+"/"+key)
 			if err != nil {
 				if h.Log != nil {
 					h.Log.Print(err)
 				}
 				return res, nil
 			}
-			err = h.Cache.Put(id, h.Name+"/"+key, res, maxage)
+			err = h.Cache.Put(ctx, id, h.Name+"/"+key, res, maxage)
 			if err != nil {
 				if h.Log != nil {
 					h.Log.Print(err)
@@ -299,7 +299,7 @@ func (h Handler) Get(key string) ([]byte, error) {
 	if !ok {
 		return nil, ErrKeyNotFound
 	}
-	err := h.Touch()
+	err := h.Touch(ctx)
 	if err != nil {
 		if h.Log != nil {
 			h.Log.Print(err)
@@ -314,7 +314,7 @@ func (h Handler) Get(key string) ([]byte, error) {
 			}
 			return res, nil
 		}
-		err = h.Cache.Put(id, h.Name+"/"+key, res, maxage)
+		err = h.Cache.Put(ctx, id, h.Name+"/"+key, res, maxage)
 		if err != nil {
 			if h.Log != nil {
 				h.Log.Print(err)
@@ -328,26 +328,26 @@ func (h Handler) Get(key string) ([]byte, error) {
 // If no store is present, cookie storage will be used.
 // if maxage < 0, the key/session should expire immediately.
 // if maxage = 0, the key/session has no set expiry.
-func (h Handler) Put(key string, value []byte, maxage time.Duration) error {
+func (h Handler) Put(ctx context.Context, key string, value []byte, maxage time.Duration) error {
 	id, ok := h.Cookie.ID()
 	if !ok {
 		return ErrNoID
 	}
 
 	if h.Store != nil {
-		_, err := h.Store.Get(id, h.Name+"/"+sessionValidityKey)
+		_, err := h.Store.Get(ctx, id, h.Name+"/"+sessionValidityKey)
 		if err != nil {
 			return ErrBadSession.Wraps(err)
 		}
 
-		err = h.Store.Put(id, h.Name+"/"+key, value, maxage)
+		err = h.Store.Put(ctx, id, h.Name+"/"+key, value, maxage)
 		if err != nil {
 			return err
 		}
 		// let's touch the session
 		h.Cookie.Touch()
 		if h.Cookie.HttpCookie.MaxAge > 0 {
-			err = h.Store.Put(id, h.Name+"/"+sessionValidityKey, []byte("true"), time.Duration(h.Cookie.HttpCookie.MaxAge))
+			err = h.Store.Put(ctx, id, h.Name+"/"+sessionValidityKey, []byte("true"), time.Duration(h.Cookie.HttpCookie.MaxAge))
 			if err != nil {
 				if h.Log != nil {
 					h.Log.Print(err)
@@ -358,7 +358,7 @@ func (h Handler) Put(key string, value []byte, maxage time.Duration) error {
 		if h.Cache == nil {
 			return nil
 		}
-		err = h.Cache.Put(id, h.Name+"/"+key, value, maxage)
+		err = h.Cache.Put(ctx, id, h.Name+"/"+key, value, maxage)
 		if err != nil {
 			if h.Log != nil {
 				h.Log.Println(err)
@@ -382,7 +382,7 @@ func (h Handler) Put(key string, value []byte, maxage time.Duration) error {
 		return nil
 	}
 
-	err := h.Cache.Put(id, h.Name+"/"+key, value, maxage)
+	err := h.Cache.Put(ctx, id, h.Name+"/"+key, value, maxage)
 	if err != nil {
 		if h.Log != nil {
 			h.Log.Println(err)
@@ -393,14 +393,14 @@ func (h Handler) Put(key string, value []byte, maxage time.Duration) error {
 }
 
 // Delete will erase a session store item.
-func (h Handler) Delete(key string) error {
+func (h Handler) Delete(ctx context.Context, key string) error {
 	id, ok := h.Cookie.ID()
 	if !ok {
 		return ErrNoID
 	}
 
 	if h.Cache == nil {
-		err := h.Cache.Delete(id, h.Name+"/"+key) // Attempt to delete a value from cache MUST succeed.
+		err := h.Cache.Delete(ctx, id, h.Name+"/"+key) // Attempt to delete a value from cache MUST succeed.
 		if err != nil {
 			if h.Log != nil {
 				h.Log.Println(err)
@@ -408,17 +408,17 @@ func (h Handler) Delete(key string) error {
 		}
 	}
 	if h.Store != nil {
-		_, err := h.Store.Get(id, h.Name+"/"+sessionValidityKey)
+		_, err := h.Store.Get(ctx, id, h.Name+"/"+sessionValidityKey)
 		if err != nil {
 			return nil // the session is invalid anyway.
 		}
 
-		err = h.Store.Delete(id, h.Name+"/"+key)
+		err = h.Store.Delete(ctx, id, h.Name+"/"+key)
 		if err != nil {
 			return err
 		}
 
-		err = h.Touch()
+		err = h.Touch(ctx)
 		if err != nil {
 			if h.Log != nil {
 				h.Log.Print(err)
@@ -426,7 +426,7 @@ func (h Handler) Delete(key string) error {
 		}
 		// attempt to touch the session
 		if h.Cookie.HttpCookie.MaxAge > 0 {
-			err = h.Store.Put(id, h.Name+"/"+sessionValidityKey, []byte("true"), time.Duration(h.Cookie.HttpCookie.MaxAge))
+			err = h.Store.Put(ctx, id, h.Name+"/"+sessionValidityKey, []byte("true"), time.Duration(h.Cookie.HttpCookie.MaxAge))
 			if err != nil {
 				if h.Log != nil {
 					h.Log.Print(err)
@@ -441,7 +441,7 @@ func (h Handler) Delete(key string) error {
 
 	h.Cookie.Delete(key)
 
-	err := h.Touch()
+	err := h.Touch(ctx)
 	if err != nil {
 		if h.Log != nil {
 			h.Log.Print(err)
@@ -451,7 +451,7 @@ func (h Handler) Delete(key string) error {
 	return nil
 }
 
-func (h Handler) loaded(ctx context.Context) bool {
+func (h Handler) Loaded(ctx context.Context) bool {
 	_, ok := ctx.Value(h.ContextKey).(http.Cookie)
 	return ok
 }
@@ -479,7 +479,7 @@ func (h Handler) loadCookie(ctx context.Context, res http.ResponseWriter, req *h
 	h.Cookie.ApplyMods.Set(false)
 
 	if h.Store != nil {
-		_, err = h.Get(sessionValidityKey)
+		_, err = h.Get(ctx, sessionValidityKey)
 		if err != nil {
 			return context.WithValue(ctx, h.ContextKey, ErrBadSession), ErrBadSession.Wraps(err)
 		}
@@ -489,14 +489,14 @@ func (h Handler) loadCookie(ctx context.Context, res http.ResponseWriter, req *h
 }
 
 func (h *Handler) Load(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
-	if h.loaded(ctx) {
+	if h.Loaded(ctx) {
 		return ctx, nil
 	}
 
 	p, err := h.Parent()
 	if err == nil {
 
-		if !p.loaded(ctx) {
+		if !p.Loaded(ctx) {
 			return ctx, ErrParentInvalid
 		}
 
@@ -512,22 +512,27 @@ func (h *Handler) Load(ctx context.Context, res http.ResponseWriter, req *http.R
 			}
 		}
 
-		_, err = h.ID()
+		id, err := h.ID()
 		if err != nil {
 			return ctx, ErrNoID
 		}
-		_, err = h.Get(sessionValidityKey)
+		_, err = h.Get(ctx, sessionValidityKey)
 		if err != nil {
 			return ctx, ErrBadSession.Wraps(err)
 		}
 
-		psid, err := h.Get(p.Name + "/id")
+		psid, err := h.Get(ctx, p.Name+"/id")
 		if err != nil {
-			return ctx, ErrParentInvalid.Wraps(err)
+			return ctx, ErrBadSession.Wraps(errors.New("Could not retrieve parent session id").Wraps(err))
 		}
 		if pid != string(psid) {
 			return ctx, ErrParentInvalid.Wraps(errors.New("session parent was loaded but session parent id is not matching with id stored in its spawn. "))
 		}
+		_, err = p.Get(ctx, h.Name+"/"+id)
+		if err != nil {
+			return ctx, ErrBadSession.Wraps(errors.New("The session does not appear on its parent"))
+		}
+
 		return h.Save(ctx, res, req)
 	}
 	// if session has no parent
@@ -538,7 +543,7 @@ func (h *Handler) Load(ctx context.Context, res http.ResponseWriter, req *http.R
 	if err != nil {
 		return ctx, ErrNoID
 	}
-	_, err = h.Get(sessionValidityKey)
+	_, err = h.Get(ctx, sessionValidityKey)
 	if err != nil {
 		return ctx, ErrBadSession.Wraps(err)
 	}
@@ -578,18 +583,21 @@ func (h *Handler) Generate(ctx context.Context, res http.ResponseWriter, req *ht
 	h.Cookie.ApplyMods.Set(true)
 
 	// 3.  Establish the session on the server if server storage is available
-	err = h.Put(sessionValidityKey, []byte("true"), time.Duration(h.Cookie.HttpCookie.MaxAge))
+	err = h.Put(ctx, sessionValidityKey, []byte("true"), time.Duration(h.Cookie.HttpCookie.MaxAge))
 	if err != nil {
 		return ctx, errors.New("Failed to generate new session.").Wraps(err)
 	}
 
 	p, err := h.Parent()
 	if err == nil {
-		err = h.Put(p.Name+"/id", []byte(id), 0)
+		if !p.Loaded(ctx) {
+			return ctx, ErrParentInvalid
+		}
+		err = h.Put(ctx, p.Name+"/id", []byte(id), 0)
 		if err != nil {
 			return ctx, err
 		}
-		err = p.Put(h.Name+"/"+id, Info(res, req).ToJSON(), 0)
+		err = p.Put(ctx, h.Name+"/"+id, Info(res, req).ToJSON(), 0)
 	}
 
 	return h.Save(ctx, res, req)
@@ -601,7 +609,7 @@ func LoadServerOnly(ctx context.Context, id string, h *Handler) (context.Context
 		return ctx, errors.New("Unable to load server session. Session Handler parameters are incorrect")
 	}
 
-	if h.loaded(ctx) {
+	if h.Loaded(ctx) {
 		sid, err := h.ID()
 		if err != nil {
 			goto load
@@ -618,7 +626,7 @@ load:
 	p, err := h.Parent()
 	if err == nil {
 
-		if !p.loaded(ctx) {
+		if !p.Loaded(ctx) {
 			return ctx, ErrParentInvalid
 		}
 
@@ -627,17 +635,21 @@ load:
 			return ctx, ErrParentInvalid.Wraps(err)
 		}
 
-		_, err = h.Get(sessionValidityKey)
+		_, err = h.Get(ctx, sessionValidityKey)
 		if err != nil {
 			return ctx, ErrBadSession.Wraps(err)
 		}
 
-		psid, err := h.Get(p.Name + "/id")
+		psid, err := h.Get(ctx, p.Name+"/id")
 		if err != nil {
 			return ctx, ErrParentInvalid.Wraps(err)
 		}
 		if pid != string(psid) {
 			return ctx, ErrParentInvalid.Wraps(errors.New("session parent was loaded but session parent id is not matching with id stored in its spawn. "))
+		}
+		_, err = p.Get(ctx, h.Name+"/"+id)
+		if err != nil {
+			return ctx, ErrBadSession.Wraps(errors.New("The session does not appear on its parent"))
 		}
 		hc, err := h.Cookie.Encode()
 		if err != nil {
@@ -647,7 +659,7 @@ load:
 		return context.WithValue(ctx, h.ContextKey, hc), nil
 	}
 	// if session has no parent
-	_, err = h.Get(sessionValidityKey)
+	_, err = h.Get(ctx, sessionValidityKey)
 	if err != nil {
 		return ctx, ErrBadSession.Wraps(err)
 	}
@@ -661,16 +673,33 @@ load:
 
 // Generate will create and load in context.Context a new server-only session
 // for a provided id if it does not already exist
-func GenerateServerOnly(ctx context.Context, id string, h *Handler) (context.Context, error) {
+func GenerateServerOnly(ctx context.Context, id string, m Metadata, h *Handler) (context.Context, error) {
 	h.SetID(id)
-	_, err := h.Get(sessionValidityKey)
+	_, err := h.Get(ctx, sessionValidityKey)
 	if err == nil {
-		return ctx, errors.New("Session does already exist.")
+		ctx, err = LoadServerOnly(ctx, id, h)
+		if err != nil {
+			return ctx, errors.New("Session does already exist but could not be loaded").Wraps(err)
+		}
+		return ctx, err
 	}
-	err = h.Put(sessionValidityKey, []byte("true"), time.Duration(h.Cookie.HttpCookie.MaxAge))
+	err = h.Put(ctx, sessionValidityKey, []byte("true"), time.Duration(h.Cookie.HttpCookie.MaxAge))
 	if err != nil {
 		return ctx, err
 	}
+
+	p, err := h.Parent()
+	if err == nil {
+		if !p.Loaded(ctx) {
+			return ctx, ErrParentInvalid
+		}
+		err = h.Put(ctx, p.Name+"/id", []byte(id), 0)
+		if err != nil {
+			return ctx, err
+		}
+		err = p.Put(ctx, h.Name+"/"+id, m.ToJSON(), 0)
+	}
+
 	hc, err := h.Cookie.Encode()
 	if err != nil {
 		return ctx, err
@@ -707,13 +736,13 @@ func (h Handler) Parent() (Handler, error) {
 }
 
 // Revoke revokes the current session.
-func (h Handler) Revoke() error {
+func (h Handler) Revoke(ctx context.Context) error {
 	id, err := h.ID()
 	if err != nil {
 		return errors.New("Unable to revoke session. Could not retrieve session ID").Wraps(err)
 	}
 	h.Cookie.Expire()
-	err = h.Delete(sessionValidityKey)
+	err = h.Delete(ctx, sessionValidityKey)
 	if err != nil {
 		return err
 	}
@@ -721,7 +750,7 @@ func (h Handler) Revoke() error {
 	if err != nil {
 		return nil
 	}
-	pid, err := h.Get(p.Name + "/id")
+	pid, err := h.Get(ctx, p.Name+"/id")
 	if err != nil {
 		if h.Log != nil {
 			h.Log.Print(errors.New("Unable to recover parent session id for revocation.").Wraps(err))
@@ -729,14 +758,14 @@ func (h Handler) Revoke() error {
 		return errors.New("Unable to recover parent session id for revocation.").Wraps(err)
 	}
 	p.SetID(string(pid))
-	err = p.Delete(h.Name + "/" + id)
+	err = p.Delete(ctx, h.Name+"/"+id)
 	if h.Log != nil {
 		h.Log.Print(err)
 	}
 	return nil // we could return the error but it's not mandatory... we'll cleanup the parent session later.
 }
 
-func (h Handler) Touch() error {
+func (h Handler) Touch(ctx context.Context) error {
 	// sends the signal to send a session cvookie back to the client to renew
 	if !h.ServerOnly {
 		h.Cookie.Touch()
@@ -744,7 +773,7 @@ func (h Handler) Touch() error {
 	}
 
 	if h.Cookie.HttpCookie.MaxAge > 0 {
-		return h.Put(sessionValidityKey, []byte("true"), time.Duration(h.Cookie.HttpCookie.MaxAge))
+		return h.Put(ctx, sessionValidityKey, []byte("true"), time.Duration(h.Cookie.HttpCookie.MaxAge))
 	}
 	return nil
 }
@@ -770,6 +799,7 @@ func (h Handler) ServeHTTP(ctx context.Context, res http.ResponseWriter, req *ht
 	}
 
 	if h.next != nil {
+		req = req.WithContext(c)
 		h.next.ServeHTTP(c, res, req)
 	}
 }
