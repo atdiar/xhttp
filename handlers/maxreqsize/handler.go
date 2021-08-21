@@ -16,10 +16,10 @@ func New(limit int) Limiter {
 	return Limiter{int64(limit), nil}
 }
 
-func (l Limiter) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+func (l Limiter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, l.BodySize)
 	if l.next != nil {
-		l.next.ServeHTTP(ctx, w, r)
+		l.next.ServeHTTP(w, r)
 	}
 }
 

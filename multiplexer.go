@@ -3,7 +3,6 @@
 package xhttp
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"net/url"
@@ -68,23 +67,23 @@ func (sm ServeMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		// Let's extract the http Method and apply the handler if it exists.
 		switch method {
 		case "GET":
-			sm.catchAll.Link(vh.get).ServeHTTP(req.Context(), w, req)
+			sm.catchAll.Link(vh.get).ServeHTTP(w, req)
 		case "POST":
-			sm.catchAll.Link(vh.post).ServeHTTP(req.Context(), w, req)
+			sm.catchAll.Link(vh.post).ServeHTTP(w, req)
 		case "PUT":
-			sm.catchAll.Link(vh.put).ServeHTTP(req.Context(), w, req)
+			sm.catchAll.Link(vh.put).ServeHTTP(w, req)
 		case "PATCH":
-			sm.catchAll.Link(vh.patch).ServeHTTP(req.Context(), w, req)
+			sm.catchAll.Link(vh.patch).ServeHTTP(w, req)
 		case "DELETE":
-			sm.catchAll.Link(vh.delete).ServeHTTP(req.Context(), w, req)
+			sm.catchAll.Link(vh.delete).ServeHTTP(w, req)
 		case "HEAD":
-			sm.catchAll.Link(vh.head).ServeHTTP(req.Context(), w, req)
+			sm.catchAll.Link(vh.head).ServeHTTP(w, req)
 		case "OPTIONS":
-			sm.catchAll.Link(vh.options).ServeHTTP(req.Context(), w, req)
+			sm.catchAll.Link(vh.options).ServeHTTP( w, req)
 		case "CONNECT":
-			sm.catchAll.Link(vh.connect).ServeHTTP(req.Context(), w, req)
+			sm.catchAll.Link(vh.connect).ServeHTTP(w, req)
 		case "TRACE":
-			sm.catchAll.Link(vh.trace).ServeHTTP(req.Context(), w, req)
+			sm.catchAll.Link(vh.trace).ServeHTTP(w, req)
 		default:
 			http.Error(w, http.StatusText(405), 405)
 		}
@@ -127,11 +126,11 @@ func (vh httpVerbFunctions) prepend(h HandlerLinker) httpVerbFunctions {
 // used to prepend catchall request handlers more easily.
 // It implements the Handler interface.
 type transformableHandler struct {
-	in      Handler
-	Handler // output
+	in      http.Handler
+	http.Handler // output
 }
 
-func (t transformableHandler) register(h Handler) transformableHandler {
+func (t transformableHandler) register(h http.Handler) transformableHandler {
 	t.in = h
 	t.Handler = h
 	return t
@@ -319,8 +318,8 @@ func Chain(handlers ...HandlerLinker) HandlerLinker {
 
 type handlerchain []HandlerLinker
 
-func (h handlerchain) ServeHTTP(ctx context.Context, res http.ResponseWriter, req *http.Request) {
-	h[0].ServeHTTP(ctx, res, req)
+func (h handlerchain) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h[0].ServeHTTP(w, r)
 }
 
 func (h handlerchain) Link(l Handler) HandlerLinker {
@@ -396,9 +395,9 @@ func (i initcatchall) Link(h Handler) HandlerLinker {
 	return i
 }
 
-func (i initcatchall) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+func (i initcatchall) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if i.next != nil {
-		i.next.ServeHTTP(ctx, w, r)
+		i.next.ServeHTTP(w, r)
 		return
 	}
 	http.Error(w, http.StatusText(405), 405)

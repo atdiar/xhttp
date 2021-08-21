@@ -1,7 +1,6 @@
 package sse
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -21,8 +20,9 @@ func New(s session.Handler) *Handler {
 	return &Handler{s, sync.Mutex{}, make(map[string]chan string)}
 }
 
-func (h *Handler) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
-	ctx, err := h.Session.Load(ctx, w, r)
+func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	err := h.Session.Load(w, r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusUnauthorized)
 		return

@@ -9,8 +9,6 @@ import (
 	"strings"
 	"sync"
 
-	"context"
-
 	"github.com/atdiar/xhttp"
 )
 
@@ -83,10 +81,10 @@ func (cw compressingWriter) Wrappee() http.ResponseWriter { return cw.ResponseWr
 
 // ServeHTTP handles a http.Request by gzipping the http response body and
 // setting the right http Headers.
-func (g Gzipper) ServeHTTP(ctx context.Context, w http.ResponseWriter, req *http.Request) {
+func (g Gzipper) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	if mustSkip, exist := g.skip[strings.ToUpper(req.Method)]; exist && mustSkip {
 		if g.next != nil {
-			g.next.ServeHTTP(ctx, w, req)
+			g.next.ServeHTTP(w, req)
 		}
 		return
 	}
@@ -97,7 +95,7 @@ func (g Gzipper) ServeHTTP(ctx context.Context, w http.ResponseWriter, req *http
 	w.Header().Add("Vary", "Accept-Encoding")
 	if !strings.Contains(req.Header.Get("Accept-Encoding"), "gzip") {
 		if g.next != nil {
-			g.next.ServeHTTP(ctx, w, req)
+			g.next.ServeHTTP(w, req)
 		}
 		return
 	}
@@ -105,7 +103,7 @@ func (g Gzipper) ServeHTTP(ctx context.Context, w http.ResponseWriter, req *http
 	// All the conditions are present : we shall compress the data before writing
 	// it out.
 	if g.next != nil {
-		g.next.ServeHTTP(ctx, wc, req)
+		g.next.ServeHTTP(wc, req)
 	}
 	err := wc.Close()
 	if err != nil {

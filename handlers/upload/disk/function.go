@@ -43,3 +43,5 @@ func Upload(ctx context.Context, u upload.Object) (n int64, rollbackFn func() er
 
 	return n, func() error { return os.Remove(filepath.Join(uploadpath, uploadname)) }, file.Sync()
 }
+
+func Complete(ctx context.Context, uploadid string) error {}

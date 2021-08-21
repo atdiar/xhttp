@@ -4,7 +4,6 @@ package xhttp
 // existence of an execution context for each request handling goroutine.
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 )
@@ -12,41 +11,30 @@ import (
 // Handler is the interface implemented by a request servicing object.
 // If Handler is not also a HandlerLinker, it means that it can not call for
 // further processing.
-type Handler interface {
-	ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request)
-}
+type Handler = http.Handler
 
 // HandlerLinker is the interface of a request Handler to which we can attach
 // another Handler. It enables the ServeHTTP method of the attached handler to
 // be called from the ServeHTTP method of the first handler, if needed.
 // The Link method returns the fully linked HandlerLinker.
 type HandlerLinker interface {
-	ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request)
+	ServeHTTP(w http.ResponseWriter, r *http.Request)
 	Link(Handler) HandlerLinker
 }
 
 // HandlerFunc defines a type of functions implementing the Handler interface.
-type HandlerFunc func(ctx context.Context, w http.ResponseWriter, r *http.Request)
-
-func (f HandlerFunc) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
-	f(ctx, w, r)
-}
+type HandlerFunc = http.HandlerFunc
 
 type handlerlinker struct {
 	handler Handler
 	next    Handler
 }
 
-func (h handlerlinker) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithCancel(ctx)
-	ctx = context.WithValue(ctx, CancelingKey, cancel)
-	h.handler.ServeHTTP(ctx, w, r) // NOTE if the conext is changed, it needs to be reflected in r.Context()
-	if ctx.Err() != nil {
-		return
-	}
+func (h handlerlinker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h.handler.ServeHTTP(w, r) // NOTE if the context is changed, it needs to be reflected in r.Context()
 
 	if h.next != nil {
-		h.next.ServeHTTP(r.Context(), w, r)
+		h.next.ServeHTTP(w, r)
 	}
 }
 
@@ -80,10 +68,6 @@ type Handler struct{
 The ServeHTTP method for this Handler can then call the next Handler if one has
 been registered.
 */
-
-type canceledCtxKey int
-
-var CancelingKey = new(canceledCtxKey)
 
 // WriteJSON can be used  to write a json encoded response
 func WriteJSON(w http.ResponseWriter, data interface{}, statusCode int) error {

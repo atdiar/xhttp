@@ -1,12 +1,11 @@
 package xhttp_test
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
 	"net/http/httptest"
-
-	"context"
 
 	"github.com/atdiar/xhttp"
 )
@@ -22,35 +21,35 @@ func Example() {
 	m := xhttp.Chain(middlewareExample{A, nil}, middlewareExample{B, nil}, middlewareExample{C, nil})
 	s.USE(m)
 
-	s.GET("/go/14", xhttp.HandlerFunc(func(ctx context.Context, res http.ResponseWriter, req *http.Request) {
-		a := ctx.Value(A)
+	s.GET("/go/14", xhttp.HandlerFunc(func(res http.ResponseWriter, req *http.Request) {
+		a := req.Context().Value(A)
 		if a == nil {
 			fmt.Fprint(res, "Couldn't find a value in the context object for A") // shall make the test fail
 		}
 		fmt.Fprint(res, a)
 
-		b := ctx.Value(B)
+		b := req.Context().Value(B)
 		if b == nil {
 			fmt.Fprint(res, "Couldn't find a value in the context object for B") // shall make the test fail
 		}
 		fmt.Fprint(res, b)
 
-		c := ctx.Value(C)
+		c := req.Context().Value(C)
 		if c == nil {
 			fmt.Fprint(res, "Couldn't find a value in the context object for C") // shall make the test fail
 		}
 		fmt.Fprint(res, c)
 	}))
 
-	s.GET("/test", xhttp.HandlerFunc(func(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	s.GET("/test", xhttp.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "test")
 	}))
 
-	s.GET("/test/3564", xhttp.HandlerFunc(func(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	s.GET("/test/3564", xhttp.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "ok")
 	}))
 
-	s.POST("/test/3564", xhttp.HandlerFunc(func(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	s.POST("/test/3564", xhttp.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "this is a post request")
 	}))
 
@@ -74,11 +73,12 @@ type middlewareExample struct {
 	next xhttp.Handler
 }
 
-func (m middlewareExample) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+func (m middlewareExample) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, "OK ")
-	c := context.WithValue(ctx, m.string, m.string)
+	c := context.WithValue(r.Context(), m.string, m.string)
+	r = r.WithContext(c)
 	if m.next != nil {
-		m.next.ServeHTTP(c, w, r)
+		m.next.ServeHTTP(w, r)
 	}
 }
 

@@ -26,11 +26,12 @@ func Multiplexer(t *testing.T) (xhttp.ServeMux, Handler) {
 	s.Cookie.HttpCookie.MaxAge = 8640000
 	r.USE(s)
 
-	r.GET("/", xhttp.HandlerFunc(func(ctx context.Context, res http.ResponseWriter, req *http.Request) {
+	r.GET("/", xhttp.HandlerFunc(func(res http.ResponseWriter, req *http.Request) {
 		// We do nothing here but a session cookie should have at least been set.
 	}))
 
-	r.POST("/", xhttp.HandlerFunc(func(ctx context.Context, res http.ResponseWriter, req *http.Request) {
+	r.POST("/", xhttp.HandlerFunc(func(res http.ResponseWriter, req *http.Request) {
+		ctx:= req.Context()
 		_, ok := ctx.Value(s.ContextKey).(http.Cookie)
 		if !ok {
 			t.Error("The session was not loaded")
@@ -43,7 +44,7 @@ func Multiplexer(t *testing.T) (xhttp.ServeMux, Handler) {
 		}
 
 		s.Put(ctx,"test", []byte("test"), 86400*time.Minute)
-		s.Save(ctx, res, req)
+		s.Save(res, req)
 
 		res.Write([]byte(id))
 	}))

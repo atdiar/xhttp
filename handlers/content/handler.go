@@ -10,8 +10,6 @@ import (
 	"net/http"
 	"time"
 
-	"context"
-
 	"github.com/atdiar/xhttp"
 )
 
@@ -34,10 +32,10 @@ func NewServer(name string, modtime time.Time, content io.ReadSeeker) Server {
 	}
 }
 
-func (s Server) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+func (s Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, s.name, s.modtime, s.content)
 	if s.next != nil {
-		s.next.ServeHTTP(ctx, w, r)
+		s.next.ServeHTTP(w, r)
 	}
 }
 

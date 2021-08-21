@@ -37,12 +37,12 @@ var (
 
 // ParseUpload parses a submitted form-data POST or PUT request, uploading any submitted
 // file within the limits defined for the endpoint in terms of upload size.
-func (h ChunkHandler) ParseUpload(ctx context.Context, w http.ResponseWriter, r *http.Request) (ParseResult, error) {
+func (h ChunkHandler) ParseUpload( w http.ResponseWriter, r *http.Request) (ParseResult, error) {
 	onerror := newCanceler()
 	f := h.Handler.Form
 	// Let's get the uploader id
 
-	if !h.Handler.Session.Loaded(ctx) {
+	if !h.Handler.Session.Loaded(r.Context()) {
 		return ParseResult{nil, onerror}, ErrParsingFailed.Wraps(errors.New("uploader session is not loaded"))
 	}
 	uploaderid, err := h.Handler.Session.ID()
@@ -100,7 +100,9 @@ func (h ChunkHandler) ParseUpload(ctx context.Context, w http.ResponseWriter, r 
 	}
 	chunkstotal = rchunkstotal[0]
 
-	ctx, err = session.LoadServerOnly(ctx, uploadid, &h.Session)
+
+// Let's try to load the upload session
+	err = session.LoadServerOnly(r, uploadid, &h.Session)
 	if err != nil {
 		return ParseResult{nil, onerror}, ErrParsingFailed.Wraps(err)
 	}
@@ -214,7 +216,7 @@ func (h ChunkHandler) ParseUpload(ctx context.Context, w http.ResponseWriter, r 
 				}
 				obj.Size = chsize
 
-				fileuuid, err := h.Session.Get(ctx, uploadid)
+				fileuuid, err := h.Session.Get(r.Context(), uploadid)
 				if err != nil {
 					return ParseResult{nil, onerror}, ErrUploadingFailed.Wraps(errors.New("Missing file UUID. Could not find in session for given uploadid. Upload complete or aborted."))
 				}
@@ -224,7 +226,7 @@ func (h ChunkHandler) ParseUpload(ctx context.Context, w http.ResponseWriter, r 
 					return ParseResult{nil, onerror}, ErrServerFormInvalid.Wraps(errors.New("Field initialization error. Lacking the upload function."))
 				}
 				// upload
-				n, cancel, err := f[fieldIndex].upload(ctx, obj)
+				n, cancel, err := f[fieldIndex].upload(r.Context(), obj)
 				if err != nil {
 					return ParseResult{nil, onerror}, err
 				}
@@ -323,10 +325,10 @@ func (c ChunkHandler) Initializer() Initializer {
 	return Initializer{&c, nil}
 }
 
-func (c ChunkHandler) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
-
+func (c ChunkHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	ctx:= r.Context()
 	// Parsing the form
-	res, err := c.ParseUpload(ctx, w, r)
+	res, err := c.ParseUpload(w, r)
 	if err != nil {
 
 		err2 := res.Cancel()
@@ -353,7 +355,7 @@ func (c ChunkHandler) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *h
 	ctx = context.WithValue(ctx, c.Handler.ctxKey, res)
 	r = r.WithContext(ctx)
 	if c.Handler.next != nil {
-		c.Handler.next.ServeHTTP(ctx, w, r)
+		c.Handler.next.ServeHTTP(w, r)
 	}
 }
 
@@ -372,8 +374,8 @@ type Initializer struct {
 	next xhttp.Handler
 }
 
-func (i Initializer) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
-
+func (i Initializer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+ctx:= r.Context()
 	if !i.c.Handler.Session.Loaded(ctx) {
 		http.Error(w, "User session does not seem to have been loaded", http.StatusUnauthorized)
 		return
@@ -406,7 +408,7 @@ func (i Initializer) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *ht
 		}
 
 		// We can create a new upload session
-		ctx, err = i.c.Session.Generate(ctx, w, r)
+		err = i.c.Session.Generate(w, r)
 		if err != nil {
 			http.Error(w, "Failed to generate new upload session", http.StatusInternalServerError)
 			return
@@ -428,7 +430,7 @@ func (i Initializer) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *ht
 	// if session has not been generated before, i.e. no concurrency limiting is
 	// implemented we generate a new session.
 	if !i.c.Session.Loaded(ctx) {
-		ctx, err = i.c.Session.Generate(ctx, w, r)
+		err = i.c.Session.Generate(w, r)
 		if err != nil {
 			http.Error(w, "Failed to generate new upload session", http.StatusInternalServerError)
 			return
@@ -469,7 +471,7 @@ func (i Initializer) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *ht
 		return
 	}
 
-	ctx, err = i.c.Session.Save(ctx, w, r)
+	err = i.c.Session.Save( w, r)
 	if err != nil {
 		http.Error(w, "Unable to set upload session cookie", http.StatusInternalServerError)
 		if i.c.Handler.Log != nil {
@@ -482,7 +484,7 @@ func (i Initializer) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *ht
 
 	r = r.WithContext(ctx)
 	if i.c.next != nil {
-		i.c.next.ServeHTTP(ctx, w, r)
+		i.c.next.ServeHTTP(w, r)
 	}
 }
 

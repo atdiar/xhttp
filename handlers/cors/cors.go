@@ -9,8 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"context"
-
 	"github.com/atdiar/xhttp"
 )
 
@@ -126,12 +124,12 @@ func (h Handler) EnablePreflight(mux *xhttp.ServeMux, endpoint string) Handler {
 	return h
 }
 
-func (p *PreflightHandler) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+func (p *PreflightHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Check Headers: Origin, Access-Control-Request-Method, Access-Control-Request-Headers
 	if !originIsPresent(r) {
 		if p.next != nil {
-			p.next.ServeHTTP(ctx, w, r)
+			p.next.ServeHTTP(w, r)
 		}
 		return
 	}
@@ -145,7 +143,7 @@ func (p *PreflightHandler) ServeHTTP(ctx context.Context, w http.ResponseWriter,
 	origin, ok := (textproto.MIMEHeader(r.Header))["Origin"]
 	if !ok {
 		if p.next != nil {
-			p.next.ServeHTTP(ctx, w, r)
+			p.next.ServeHTTP( w, r)
 		}
 		return
 	}
@@ -155,7 +153,7 @@ func (p *PreflightHandler) ServeHTTP(ctx context.Context, w http.ResponseWriter,
 	}
 	if !originallowed {
 		if p.next != nil {
-			p.next.ServeHTTP(ctx, w, r)
+			p.next.ServeHTTP(w, r)
 		}
 		return
 	}
@@ -166,7 +164,7 @@ func (p *PreflightHandler) ServeHTTP(ctx context.Context, w http.ResponseWriter,
 	method, ok := (textproto.MIMEHeader(r.Header))["Access-Control-Request-Method"]
 	if !ok {
 		if p.next != nil {
-			p.next.ServeHTTP(ctx, w, r)
+			p.next.ServeHTTP(w, r)
 		}
 		return
 	}
@@ -176,7 +174,7 @@ func (p *PreflightHandler) ServeHTTP(ctx context.Context, w http.ResponseWriter,
 	}
 	if !methodallowed {
 		if p.next != nil {
-			p.next.ServeHTTP(ctx, w, r)
+			p.next.ServeHTTP(w, r)
 		}
 		return
 	}
@@ -187,7 +185,7 @@ func (p *PreflightHandler) ServeHTTP(ctx context.Context, w http.ResponseWriter,
 	headers, ok := (textproto.MIMEHeader(r.Header))["Access-Control-Request-Headers"]
 	if !ok {
 		if p.next != nil {
-			p.next.ServeHTTP(ctx, w, r)
+			p.next.ServeHTTP(w, r)
 		}
 		return
 	}
@@ -201,7 +199,7 @@ func (p *PreflightHandler) ServeHTTP(ctx context.Context, w http.ResponseWriter,
 	}
 	if !headersallowed {
 		if p.next != nil {
-			p.next.ServeHTTP(ctx, w, r)
+			p.next.ServeHTTP(w, r)
 		}
 		return
 	}
@@ -219,7 +217,7 @@ func (p *PreflightHandler) ServeHTTP(ctx context.Context, w http.ResponseWriter,
 	}
 
 	if p.next != nil {
-		p.next.ServeHTTP(ctx, w, r)
+		p.next.ServeHTTP(w, r)
 	}
 }
 
@@ -236,12 +234,12 @@ func (h Handler) WithCredentials() Handler {
 	return h
 }
 
-func (h Handler) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Add("Vary", "Origin")
 
 	if !originIsPresent(r) {
 		if h.next != nil {
-			h.next.ServeHTTP(ctx, w, r)
+			h.next.ServeHTTP(w, r)
 		}
 		return
 	}
@@ -251,7 +249,7 @@ func (h Handler) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.R
 		if headersAreAllowed(r, SimpleRequestHeaders) {
 			if contentTypeIsAllowed(r, SimpleRequestContentTypes) {
 				if h.next != nil {
-					h.next.ServeHTTP(ctx, w, r)
+					h.next.ServeHTTP(w, r)
 				}
 				return
 			}
@@ -262,7 +260,7 @@ func (h Handler) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.R
 	setExposeHeaders(w, h.Parameters.ExposeHeaders)
 
 	if h.next != nil {
-		h.next.ServeHTTP(ctx, w, r)
+		h.next.ServeHTTP(w, r)
 	}
 }
 

@@ -76,11 +76,11 @@ func (f Form) Get(fieldname string) (val []byte, err error) {
 
 // ParseUpload parses a submitted form-data POST or PUT request, uploading any submitted
 // file within the limits defined for the endpoint in terms of upload size.
-func (h Handler) ParseUpload(ctx context.Context, w http.ResponseWriter, r *http.Request) (ParseResult, error) {
+func (h Handler) ParseUpload(w http.ResponseWriter, r *http.Request) (ParseResult, error) {
 	onerror := newCanceler()
 	f := h.Form
 	// Let's get the uploader id
-	ctx, err := h.Session.Load(ctx, w, r)
+	err := h.Session.Load(w, r)
 	if err != nil {
 		return ParseResult{nil, onerror}, ErrParsingFailed.Wraps(errors.New("Unable to load session").Wraps(err))
 	}
@@ -212,7 +212,7 @@ func (h Handler) ParseUpload(ctx context.Context, w http.ResponseWriter, r *http
 						return ParseResult{nil, onerror}, ErrServerFormInvalid.Wraps(errors.New("Field initialization error. Lacking the upload function."))
 					}
 					// upload
-					n, cancel, err := f[fieldIndex].upload(ctx, obj) // todo cancel function needs to be saved somewhere like to)p level slice of cancelfunction
+					n, cancel, err := f[fieldIndex].upload(r.Context(), obj) // todo cancel function needs to be saved somewhere like to)p level slice of cancelfunction
 					if err != nil {
 						return ParseResult{nil, onerror}, ErrUploadingFailed.Wraps(err)
 					}
@@ -243,7 +243,7 @@ func (h Handler) ParseUpload(ctx context.Context, w http.ResponseWriter, r *http
 						return ParseResult{nil, onerror}, ErrServerFormInvalid.Wraps(errors.New("Field initialization error. Lacking the upload function."))
 					}
 					// upload
-					n, cancel, err := f[fieldIndex].upload(ctx, obj) // todo cancel function needs to be saved somewhere like to)p level slice of cancelfunction
+					n, cancel, err := f[fieldIndex].upload(r.Context(), obj) // todo cancel function needs to be saved somewhere like to)p level slice of cancelfunction
 					if err != nil {
 						return ParseResult{nil, onerror}, err
 					}
@@ -470,12 +470,13 @@ func (h Handler) WithLogger(l *log.Logger) Handler {
 	return h
 }
 
-func (h Handler) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	// Limit size of the request
 	//r.Body = http.MaxBytesReader(w, r.Body, h.ReqMaxSize)
 
 	// Parsing the form
-	res, err := h.ParseUpload(ctx, w, r)
+	res, err := h.ParseUpload(w, r)
 	if err != nil {
 		if h.Log != nil {
 			h.Log.Print(err)
@@ -499,7 +500,7 @@ func (h Handler) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.R
 	ctx = context.WithValue(ctx, h.ctxKey, res)
 	r = r.WithContext(ctx)
 	if h.next != nil {
-		h.next.ServeHTTP(ctx, w, r)
+		h.next.ServeHTTP(w, r)
 	}
 }
 

@@ -77,14 +77,14 @@ func SameAssignedRoles(r, t Role) bool {
 // RoleList defines a list of roles that may be enforced simultaneously.
 type RoleList struct {
 	Roles      map[*contextKey]Role
-	AssignRole func(context.Context, http.ResponseWriter, *http.Request, Role) (context.Context, error)
+	AssignRole func(http.ResponseWriter, *http.Request, Role) error
 	next       xhttp.Handler
 }
 
 // NewRoleList creates a RoleList.
 // The first argument is the function used to assign roles in response to a http request
 // to be granted said roles.
-func NewRoleList(AssignFunc func(context.Context, http.ResponseWriter, *http.Request, Role) (context.Context, error), roles ...Role) RoleList {
+func NewRoleList(AssignFunc func(http.ResponseWriter, *http.Request, Role) error, roles ...Role) RoleList {
 	m := make(map[*contextKey]Role)
 	for _, role := range roles {
 		m[role.ContextKey] = role
@@ -92,22 +92,24 @@ func NewRoleList(AssignFunc func(context.Context, http.ResponseWriter, *http.Req
 	return RoleList{m, AssignFunc, nil}
 }
 
-func (rl RoleList) ServeHTTP(ctx context.Context, w http.ResponseWriter, req *http.Request) {
+func (rl RoleList) ServeHTTP( w http.ResponseWriter, req *http.Request) {
+	ctx:= req.Context()
 	if rl.AssignRole == nil {
 		http.Error(w, "", http.StatusInternalServerError)
 	}
 	var err error
 	for _, r := range rl.Roles {
 		r.AssignedOn = time.Now().UTC()
-		ctx, err = rl.AssignRole(ctx, w, req, r)
+		err = rl.AssignRole(w, req, r)
 		if err != nil {
 			http.Error(w, "unable to grant authorization", http.StatusInternalServerError)
 			return
 		}
 		ctx = context.WithValue(ctx, r.ContextKey, r)
 	}
+	req = req.WithContext(ctx)
 	if rl.next != nil {
-		rl.next.ServeHTTP(ctx, w, req)
+		rl.next.ServeHTTP(w, req)
 	}
 }
 
@@ -120,21 +122,22 @@ func (rl RoleList) Link(h xhttp.Handler) xhttp.HandlerLinker {
 // is made with the proper roles and/or permissions.
 type Enforcer struct {
 	Roles                RoleList
-	AuthorizationChecker func(context.Context, http.ResponseWriter, *http.Request, Role) (context.Context, error)
+	AuthorizationChecker func(http.ResponseWriter, *http.Request, Role) error
 	next                 xhttp.Handler
 }
 
 // Enforce returns a role-based access checking xhttp.Handler.
 // As in the Rolelist AccessGranted method, it takes as argument a function that
 // checks if a user has the proper roles.
-func Enforce(r RoleList, AuthorizationChecker func(context.Context, http.ResponseWriter, *http.Request, Role) (context.Context, error)) Enforcer {
+func Enforce(r RoleList, AuthorizationChecker func(http.ResponseWriter, *http.Request, Role) error) Enforcer {
 	return Enforcer{r, AuthorizationChecker, nil}
 }
 
-func (e Enforcer) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+func (e Enforcer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	ctx:= r.Context()
 	var err error
 	for _, role := range e.Roles.Roles {
-		ctx, err = e.AuthorizationChecker(ctx, w, r, role)
+		err = e.AuthorizationChecker(w, r, role)
 		if err != nil {
 			log.Print("Err: \n", err, "\n", role)
 			http.Error(w, "Access Denied, Role or permission missing.", http.StatusUnauthorized)
@@ -142,9 +145,9 @@ func (e Enforcer) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.
 		}
 		ctx = context.WithValue(ctx, role.ContextKey, role)
 	}
-
+	r = r.WithContext(ctx)
 	if e.next != nil {
-		e.next.ServeHTTP(ctx, w, r)
+		e.next.ServeHTTP(w, r)
 		return
 	}
 }

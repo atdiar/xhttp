@@ -1,7 +1,6 @@
 package session
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"log"
@@ -204,7 +203,7 @@ func (c Cookie) TimeToExpiry(key string) (time.Duration, error) {
 }
 
 // Erase deletes the session cookies sharing the session name
-func (c Cookie) Erase(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+func (c Cookie) Erase(w http.ResponseWriter, r *http.Request) {
 	cookieslice := r.Cookies()
 	for _, cookie := range cookieslice {
 		if cookie.Name == c.HttpCookie.Name {

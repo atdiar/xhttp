@@ -9,8 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"context"
-
 	"github.com/atdiar/xhttp"
 )
 
@@ -26,7 +24,8 @@ func TestAntiCSRF(t *testing.T) {
 	r := xhttp.NewServeMux()
 	r.USE(anticsrf)
 
-	r.POST("/", xhttp.HandlerFunc(func(ctx context.Context, res http.ResponseWriter, req *http.Request) {
+	r.POST("/", xhttp.HandlerFunc(func(res http.ResponseWriter, req *http.Request) {
+		ctx := req.Context()
 		token, err := anticsrf.CtxToken(ctx)
 		if err != nil {
 			t.Error(err.Error())
@@ -35,7 +34,8 @@ func TestAntiCSRF(t *testing.T) {
 		res.Write([]byte(token))
 	}))
 
-	r.GET("/", xhttp.HandlerFunc(func(ctx context.Context, res http.ResponseWriter, req *http.Request) {
+	r.GET("/", xhttp.HandlerFunc(func(res http.ResponseWriter, req *http.Request) {
+		ctx := req.Context()
 		token, err := anticsrf.CtxToken(ctx)
 		if err != nil {
 			t.Error(err.Error())

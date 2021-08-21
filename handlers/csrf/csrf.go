@@ -59,22 +59,22 @@ func (h Handler) Link(hn xhttp.Handler) xhttp.HandlerLinker {
 	return h
 }
 
-func (h Handler) generateToken(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
+func (h Handler) generateToken(res http.ResponseWriter, req *http.Request) error {
 	tok, err := generateToken(32)
 	if err != nil {
 		http.Error(res, "Generating anti-CSRF Token failed", 503)
-		return ctx, err
+		return err
 	}
 	// First we replace the session cookie by the anti-CSRF cookie
 	// That will ensure that on Session Save, the anti-CSRF is registered in the
 	// http response header.
-	err = h.Session.Put(ctx, h.Session.Name, []byte(tok), 0)
+	err = h.Session.Put(req.Context(), h.Session.Name, []byte(tok), 0)
 
 	if err != nil {
 		http.Error(res, "Storing new CSRF Token in session failed", 503)
-		return ctx, err
+		return err
 	}
-	return h.Session.Save(ctx, res, req)
+	return h.Session.Save(res, req)
 }
 
 // CtxToken returns the encoded session value of a csrf token.
@@ -87,7 +87,8 @@ func (h Handler) CtxToken(ctx context.Context) (string, error) {
 }
 
 // ServeHTTP handles the servicing of incoming http requests.
-func (h Handler) ServeHTTP(ctx context.Context, res http.ResponseWriter, req *http.Request) {
+func (h Handler) ServeHTTP(res http.ResponseWriter, req *http.Request) {
+	ctx := req.Context()
 	// We want any potential caching system to remain aware of changes to the
 	// cookie header. As such, we have to add a Vary header.
 	res.Header().Add("Vary", "Cookie")
@@ -95,7 +96,7 @@ func (h Handler) ServeHTTP(ctx context.Context, res http.ResponseWriter, req *ht
 	// First we have to load the session data.
 	// Indeed, we want to register the CSRF token as a session value.
 	// For this, we need to use the most recently generated session id.
-	ctx, err := h.Session.Load(ctx, res, req)
+	err := h.Session.Load(res, req)
 
 	switch req.Method {
 	case methodGET, methodHEAD, methodOPTIONS:
@@ -103,19 +104,19 @@ func (h Handler) ServeHTTP(ctx context.Context, res http.ResponseWriter, req *ht
 		// However, an anti-CSRF token is generated and sent with the response
 		// iff none has been generated yet.
 		if err != nil {
-			ctx, err = h.generateToken(ctx, res, req)
+			err = h.generateToken(res, req)
 			if err != nil {
 				http.Error(res, "Internal Server Error", 500)
 				return
 			}
 		}
 		if h.next != nil {
-			h.next.ServeHTTP(ctx, res, req)
+			h.next.ServeHTTP(res, req)
 		}
 
 	default:
 		if err != nil {
-			ctx, err = h.generateToken(ctx, res, req)
+			err = h.generateToken(res, req)
 			if err != nil {
 				http.Error(res, "Internal Server Error", 500)
 				return
@@ -136,7 +137,7 @@ func (h Handler) ServeHTTP(ctx context.Context, res http.ResponseWriter, req *ht
 		headerToken := Header[0]
 		cookie, ok := ctx.Value(h.Session.ContextKey).(http.Cookie)
 		if !ok {
-			ctx, err = h.generateToken(ctx, res, req)
+			err = h.generateToken(res, req)
 			if err != nil {
 				http.Error(res, "Internal Server Error", 500)
 				return
@@ -146,7 +147,7 @@ func (h Handler) ServeHTTP(ctx context.Context, res http.ResponseWriter, req *ht
 		}
 		cookieToken := cookie.Value
 		if headerToken != cookieToken {
-			ctx, err = h.generateToken(ctx, res, req)
+			err = h.generateToken(res, req)
 			if err != nil {
 				http.Error(res, "Internal Server Error", 500)
 				return
@@ -155,7 +156,7 @@ func (h Handler) ServeHTTP(ctx context.Context, res http.ResponseWriter, req *ht
 			return
 		}
 		if h.next != nil {
-			h.next.ServeHTTP(ctx, res, req)
+			h.next.ServeHTTP(res, req)
 		}
 		return
 	}

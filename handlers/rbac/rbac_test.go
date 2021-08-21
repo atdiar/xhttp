@@ -1,7 +1,6 @@
 package rbac
 
 import (
-	"context"
 	"encoding/json"
 	//"log"
 	"net/http"
@@ -61,20 +60,21 @@ func saveRoleInDB(r Role) error {
 //
 // NOTE: this is not an example for use in production as one would typically save
 // the roles in a database instead.
-func AssignRoleToUserFn(s session.Handler) func(context.Context, http.ResponseWriter, *http.Request, Role) (context.Context, error) {
-	return func(ctx context.Context, w http.ResponseWriter, req *http.Request, r Role) (context.Context, error) {
+func AssignRoleToUserFn(s session.Handler) func(http.ResponseWriter, *http.Request, Role) error {
+	return func(w http.ResponseWriter, req *http.Request, r Role) error {
+		ctx := req.Context()
 		err := saveRoleInDB(r)
 		if err != nil {
-			return ctx, err
+			return err
 		}
-		ctx, err = s.Load(ctx, w, req)
+		err = s.Load(w, req)
 		if err != nil {
-			return ctx, err
+			return err
 		}
 
 		b, err := json.Marshal(r)
 		if err != nil {
-			return ctx, err
+			return err
 		}
 
 		b2, err := s.Get(ctx, r.UID)
@@ -82,19 +82,19 @@ func AssignRoleToUserFn(s session.Handler) func(context.Context, http.ResponseWr
 			storedRole := new(Role)
 			err = json.Unmarshal(b2, storedRole)
 			if err != nil {
-				return ctx, err
+				return err
 			}
 			if SameAssignedRoles(r, *storedRole) {
-				return ctx, nil
+				return nil
 			}
-			return ctx, errors.New("UNABLE TO ASSIGN ROLE. ROLE ID ALREADY EXISTS FOR THIS USER ")
+			return errors.New("UNABLE TO ASSIGN ROLE. ROLE ID ALREADY EXISTS FOR THIS USER ")
 		}
 		err = s.Put(ctx, r.UID, b, r.Duration)
 		if err != nil {
-			return ctx, err
+			return err
 		}
-		ctx, err = s.Save(ctx, w, req)
-		return ctx, err
+		err = s.Save(w, req)
+		return err
 	}
 }
 
@@ -103,28 +103,29 @@ func AssignRoleToUserFn(s session.Handler) func(context.Context, http.ResponseWr
 //
 // NOTE: again, not for production use as one would typically check the roles
 // against a database and not a session store.
-func AssertUserHasRoleFn(s session.Handler) func(context.Context, http.ResponseWriter, *http.Request, Role) (context.Context, error) {
-	return func(ctx context.Context, w http.ResponseWriter, req *http.Request, r Role) (context.Context, error) {
+func AssertUserHasRoleFn(s session.Handler) func(http.ResponseWriter, *http.Request, Role) error {
+	return func(w http.ResponseWriter, req *http.Request, r Role) error {
+
 		// first, we try to retrieve the session
-		ctx, err := s.Load(ctx, w, req)
+		err := s.Load(w, req)
 		if err != nil {
-			return ctx, errors.New("unable to retrieve session in order to check user roles.").Wraps(err)
+			return errors.New("unable to retrieve session in order to check user roles.").Wraps(err)
 		}
 
-		b2, err := s.Get(ctx, r.UID)
+		b2, err := s.Get(req.Context(), r.UID)
 		if err != nil {
-			return ctx, err
+			return err
 		}
 
 		storedRole := new(Role)
 		err = json.Unmarshal(b2, storedRole)
 		if err != nil {
-			return ctx, err
+			return err
 		}
 		if SameRoleDefinitions(r, *storedRole) {
-			return ctx, nil
+			return nil
 		}
-		return ctx, errors.New("DB ERROR: ROLE MISMATCH FOR SAME ROLE ID")
+		return errors.New("DB ERROR: ROLE MISMATCH FOR SAME ROLE ID")
 
 	}
 }
@@ -149,8 +150,8 @@ func Multiplexer(t *testing.T) (xhttp.ServeMux, session.Handler) {
 
 	// this route is used to set user roles which should be persisted somewhere
 	// for check on the role protected routes.
-	mux.GET("/setroles", roles123.Link(xhttp.HandlerFunc(func(ctx context.Context, w http.ResponseWriter, r *http.Request) {
-		ctx, err := s.Load(ctx, w, r)
+	mux.GET("/setroles", roles123.Link(xhttp.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		err := s.Load(w, r)
 
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -163,13 +164,13 @@ func Multiplexer(t *testing.T) (xhttp.ServeMux, session.Handler) {
 		w.Write([]byte(id))
 	})))
 
-	mux.GET("/protected/zero", roleEnforcer0.Link(xhttp.HandlerFunc(func(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	mux.GET("/protected/zero", roleEnforcer0.Link(xhttp.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write(([]byte)("user was allowed. role0"))
 	})))
-	mux.GET("/protected/123", roleEnforcer123.Link(xhttp.HandlerFunc(func(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	mux.GET("/protected/123", roleEnforcer123.Link(xhttp.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write(([]byte)("user was allowed. role123"))
 	})))
-	mux.GET("/protected/0123", xhttp.Chain(roleEnforcer0, roleEnforcer123).Link(xhttp.HandlerFunc(func(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	mux.GET("/protected/0123", xhttp.Chain(roleEnforcer0, roleEnforcer123).Link(xhttp.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write(([]byte)("user was allowed. role0 and role123"))
 	})))
 

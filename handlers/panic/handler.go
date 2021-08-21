@@ -5,21 +5,19 @@ package panic
 import (
 	"net/http"
 
-	"context"
-
 	"github.com/atdiar/xhttp"
 )
 
 // Handler allows for the registration of a panic handling function.
 type Handler struct {
-	Handle func(msg interface{}, ctx context.Context, w http.ResponseWriter, r *http.Request)
+	Handle func(msg interface{}, w http.ResponseWriter, r *http.Request)
 	next   xhttp.Handler
 }
 
 // NewHandler return an object used to take care of panics stemming from the
 // request handling process accomodated by a downstrean chain of registered
 // request handlers.
-func NewHandler(handler func(msg interface{}, ctx context.Context, w http.ResponseWriter, r *http.Request)) Handler {
+func NewHandler(handler func(msg interface{}, w http.ResponseWriter, r *http.Request)) Handler {
 	return Handler{
 		Handle: handler,
 		next:   nil,
@@ -27,14 +25,14 @@ func NewHandler(handler func(msg interface{}, ctx context.Context, w http.Respon
 }
 
 // ServeHTTP handles the servicing of incoming http requests.
-func (h Handler) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		if errmsg := recover(); errmsg != nil {
-			h.Handle(errmsg, ctx, w, r)
+			h.Handle(errmsg, w, r)
 		}
 	}()
 	if h.next != nil {
-		h.next.ServeHTTP(ctx, w, r)
+		h.next.ServeHTTP(w, r)
 		return
 	}
 	panic("Panic Handler was ill-registered")

@@ -4,8 +4,6 @@ import (
 	"net/http"
 	"strings"
 
-	"context"
-
 	"github.com/atdiar/xhttp"
 )
 
@@ -26,17 +24,17 @@ func NewHandler(prefix string) Handler {
 	}
 }
 
-func (h Handler) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+func (h Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.prefix == "" {
 		if h.next != nil {
-			h.next.ServeHTTP(ctx, w, r)
+			h.next.ServeHTTP(w, r)
 			return
 		}
 	}
 	if p := strings.TrimPrefix(r.URL.Path, h.prefix); len(p) < len(r.URL.Path) {
 		r.URL.Path = p
 		if h.next != nil {
-			h.next.ServeHTTP(ctx, w, r)
+			h.next.ServeHTTP(w, r)
 			return
 		}
 	} else {

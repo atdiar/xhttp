@@ -10,8 +10,6 @@ import (
 
 	"testing"
 
-	"context"
-
 	"github.com/atdiar/xhttp"
 )
 
@@ -34,7 +32,7 @@ func CreateMuxes(t *testing.T) (xhttp.ServeMux, *Multiplexer) {
 	dynamux := NewMultiplexer()
 
 	mux.GET("/atom/ray/", dynamux)
-	mux.GET("/test/trueLink", xhttp.HandlerFunc(func(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	mux.GET("/test/trueLink", xhttp.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(FWD))
 	}))
 
@@ -51,7 +49,7 @@ func TestLinkHandler(t *testing.T) {
 	}
 
 	// the dynamux should handle link prefixes
-	lnk := NewLink("linkid89645537y6", `/atom/ray/56/palmer/46`, u, 0, false).WithHandler(xhttp.HandlerFunc(func(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	lnk := NewLink("linkid89645537y6", `/atom/ray/56/palmer/46`, u, 0, false).WithHandler(xhttp.HandlerFunc(func( w http.ResponseWriter, r *http.Request) {
 		test1 = test1 + test2
 		w.Write([]byte(strconv.Itoa(test1)))
 	}))
@@ -95,7 +93,7 @@ func TestLinkServerWithRedirect(t *testing.T) {
 	}
 
 	// link creation
-	lnk := NewLink("linkid89645537y6", `/atom/ray/56/palmer/46`, urlserv, 0, true).WithHandler(xhttp.HandlerFunc(func(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	lnk := NewLink("linkid89645537y6", `/atom/ray/56/palmer/46`, urlserv, 0, true).WithHandler(xhttp.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		test1 = test1 + test2
 	}))
 

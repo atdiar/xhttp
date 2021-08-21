@@ -83,7 +83,7 @@ func (l Link) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Requ
 	}
 
 	if l.Handler != nil {
-		l.Handler.ServeHTTP(ctx, w, r)
+		l.Handler.ServeHTTP(w, r)
 	}
 
 	if l.Proxy != nil {
@@ -161,7 +161,8 @@ func pathExists(url *url.URL, m *Multiplexer) (bool, string) {
 	return ok, longestpath
 }
 
-func (m *Multiplexer) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+func (m *Multiplexer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	ctx:= r.Context()
 	ok, dao := pathExists(r.URL, m)
 	v, ok := m.Links[dao]
 	if !ok {

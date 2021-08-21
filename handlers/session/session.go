@@ -87,9 +87,9 @@ type Interface interface {
 	Get(context.Context, string) ([]byte, error)
 	Put(ctx context.Context, key string, value []byte, maxage time.Duration) error
 	Delete(ctx context.Context, key string) error
-	Load(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error)
-	Save(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error)
-	Generate(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error)
+	Load(res http.ResponseWriter, req *http.Request) error
+	Save(res http.ResponseWriter, req *http.Request) error
+	Generate(res http.ResponseWriter, req *http.Request)  error
 }
 
 // Handler defines a type for request handling objects in charge of
@@ -459,14 +459,15 @@ func (h Handler) Loaded(ctx context.Context) bool {
 // loadFromCookie recovers the session data from the session cookie sent by the client or,
 // if already called before, attempts to find the latest version of the session
 // cookie that will have been saved by using the Save method.
-func (h Handler) loadCookie(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
-
+func (h Handler) loadCookie(res http.ResponseWriter, req *http.Request) error {
+	ctx := req.Context()
 	// Let's try to load a session cookie value from the request
 	reqc, err := req.Cookie(h.Name)
 	if err != nil {
 		// at this point, should generate a new session since there is no session cookie
 		// sent by the client.
-		return context.WithValue(ctx, h.ContextKey, ErrBadSession), ErrBadSession.Wraps(err)
+		req = req.WithContext(context.WithValue(ctx, h.ContextKey, ErrBadSession))
+		return ErrBadSession.Wraps(err)
 	}
 
 	err = h.Cookie.Decode(*reqc)
@@ -474,80 +475,83 @@ func (h Handler) loadCookie(ctx context.Context, res http.ResponseWriter, req *h
 		if h.Log != nil {
 			h.Log.Println(errors.New("Bad cookie").Wraps(err))
 		}
-		return context.WithValue(ctx, h.ContextKey, ErrBadCookie), ErrBadCookie.Wraps(err)
+		req = req.WithContext(context.WithValue(ctx, h.ContextKey, ErrBadCookie))
+		return ErrBadCookie.Wraps(err)
 	}
 	h.Cookie.ApplyMods.Set(false)
 
 	if h.Store != nil {
 		_, err = h.Get(ctx, sessionValidityKey)
 		if err != nil {
-			return context.WithValue(ctx, h.ContextKey, ErrBadSession), ErrBadSession.Wraps(err)
+			req = req.WithContext(context.WithValue(ctx, h.ContextKey, ErrBadSession))
+			return ErrBadSession.Wraps(err)
 		}
 	}
-
-	return context.WithValue(ctx, h.ContextKey, *(h.Cookie.HttpCookie)), nil
+	req = req.WithContext(context.WithValue(ctx, h.ContextKey, *(h.Cookie.HttpCookie)))
+	return  nil
 }
 
-func (h *Handler) Load(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
+func (h *Handler) Load(res http.ResponseWriter, req *http.Request) error {
+	ctx:= req.Context()
 	if h.Loaded(ctx) {
-		return ctx, nil
+		return nil
 	}
 
 	p, err := h.Parent()
 	if err == nil {
 
 		if !p.Loaded(ctx) {
-			return ctx, ErrParentInvalid
+			return ErrParentInvalid
 		}
 
 		pid, err := p.ID()
 		if err != nil {
-			return ctx, ErrParentInvalid.Wraps(err)
+			return ErrParentInvalid.Wraps(err)
 		}
 
 		if !h.ServerOnly {
-			ctx, err = h.loadCookie(ctx, res, req)
+			err = h.loadCookie(res, req)
 			if err != nil {
-				return ctx, err
+				return err
 			}
 		}
 
 		id, err := h.ID()
 		if err != nil {
-			return ctx, ErrNoID
+			return ErrNoID
 		}
 		_, err = h.Get(ctx, sessionValidityKey)
 		if err != nil {
-			return ctx, ErrBadSession.Wraps(err)
+			return ErrBadSession.Wraps(err)
 		}
 
 		psid, err := h.Get(ctx, p.Name+"/id")
 		if err != nil {
-			return ctx, ErrBadSession.Wraps(errors.New("Could not retrieve parent session id").Wraps(err))
+			return ErrBadSession.Wraps(errors.New("Could not retrieve parent session id").Wraps(err))
 		}
 		if pid != string(psid) {
-			return ctx, ErrParentInvalid.Wraps(errors.New("session parent was loaded but session parent id is not matching with id stored in its spawn. "))
+			return ErrParentInvalid.Wraps(errors.New("session parent was loaded but session parent id is not matching with id stored in its spawn. "))
 		}
 		_, err = p.Get(ctx, h.Name+"/"+id)
 		if err != nil {
-			return ctx, ErrBadSession.Wraps(errors.New("The session does not appear on its parent"))
+			return ErrBadSession.Wraps(errors.New("The session does not appear on its parent"))
 		}
 
-		return h.Save(ctx, res, req)
+		return h.Save(res, req)
 	}
 	// if session has no parent
 	if !h.ServerOnly {
-		return h.loadCookie(ctx, res, req)
+		return h.loadCookie(res, req)
 	}
 	_, err = h.ID()
 	if err != nil {
-		return ctx, ErrNoID
+		return ErrNoID
 	}
 	_, err = h.Get(ctx, sessionValidityKey)
 	if err != nil {
-		return ctx, ErrBadSession.Wraps(err)
+		return ErrBadSession.Wraps(err)
 	}
-	return h.Save(ctx, res, req)
+	return h.Save(res, req)
 }
 
 // Save will modify and keep the session data in the per-request context store.
@@ -555,24 +559,27 @@ func (h *Handler) Load(ctx context.Context, res http.ResponseWriter, req *http.R
 // These changes entail a modification in the value of the session cookie.
 // The session cookie is stored in the context.Context non-encoded.
 // Not safe for concurrent use by multiple goroutines.
-func (h *Handler) Save(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
+func (h *Handler) Save(res http.ResponseWriter, req *http.Request) error {
+	ctx:= req.Context()
 	hc, err := h.Cookie.Encode()
 	if err != nil {
-		return ctx, err
+		return err
 	}
 	if !h.ServerOnly {
 		http.SetCookie(res, &hc)
 	}
 	h.Cookie.ApplyMods.Set(false)
-	return context.WithValue(ctx, h.ContextKey, hc), nil
+	req = req.WithContext(context.WithValue(ctx, h.ContextKey, hc))
+	return nil
 }
 
 // Generate creates a completely new session. with a new generated id.
-func (h *Handler) Generate(ctx context.Context, res http.ResponseWriter, req *http.Request) (context.Context, error) {
+func (h *Handler) Generate(res http.ResponseWriter, req *http.Request) error {
+	ctx:=req.Context()
 	// 1. Create UUID
 	id, err := h.uuidgen()
 	if err != nil {
-		return ctx, err
+		return  err
 	}
 
 	// 2. Update session cookie
@@ -585,28 +592,29 @@ func (h *Handler) Generate(ctx context.Context, res http.ResponseWriter, req *ht
 	// 3.  Establish the session on the server if server storage is available
 	err = h.Put(ctx, sessionValidityKey, []byte("true"), time.Duration(h.Cookie.HttpCookie.MaxAge))
 	if err != nil {
-		return ctx, errors.New("Failed to generate new session.").Wraps(err)
+		return errors.New("Failed to generate new session.").Wraps(err)
 	}
 
 	p, err := h.Parent()
 	if err == nil {
 		if !p.Loaded(ctx) {
-			return ctx, ErrParentInvalid
+			return ErrParentInvalid
 		}
 		err = h.Put(ctx, p.Name+"/id", []byte(id), 0)
 		if err != nil {
-			return ctx, err
+			return err
 		}
-		err = p.Put(ctx, h.Name+"/"+id, Info(res, req).ToJSON(), 0)
+		err = p.Put(ctx, h.Name+"/"+id, Info(req).ToJSON(), 0)
 	}
 
-	return h.Save(ctx, res, req)
+	return h.Save(res, req)
 }
 
 // Load is used to load a session which is only known server-side. (serve-only)
-func LoadServerOnly(ctx context.Context, id string, h *Handler) (context.Context, error) {
+func LoadServerOnly(r *http.Request, id string, h *Handler) error {
+	ctx:= r.Context()
 	if !h.ServerOnly || h.Store == nil {
-		return ctx, errors.New("Unable to load server session. Session Handler parameters are incorrect")
+		return errors.New("Unable to load server session. Session Handler parameters are incorrect")
 	}
 
 	if h.Loaded(ctx) {
@@ -617,7 +625,7 @@ func LoadServerOnly(ctx context.Context, id string, h *Handler) (context.Context
 		if sid != id {
 			goto load
 		}
-		return ctx, nil
+		return nil
 	}
 
 load:
@@ -627,85 +635,89 @@ load:
 	if err == nil {
 
 		if !p.Loaded(ctx) {
-			return ctx, ErrParentInvalid
+			return ErrParentInvalid
 		}
 
 		pid, err := p.ID()
 		if err != nil {
-			return ctx, ErrParentInvalid.Wraps(err)
+			return ErrParentInvalid.Wraps(err)
 		}
 
 		_, err = h.Get(ctx, sessionValidityKey)
 		if err != nil {
-			return ctx, ErrBadSession.Wraps(err)
+			return ErrBadSession.Wraps(err)
 		}
 
 		psid, err := h.Get(ctx, p.Name+"/id")
 		if err != nil {
-			return ctx, ErrParentInvalid.Wraps(err)
+			return ErrParentInvalid.Wraps(err)
 		}
 		if pid != string(psid) {
-			return ctx, ErrParentInvalid.Wraps(errors.New("session parent was loaded but session parent id is not matching with id stored in its spawn. "))
+			return ErrParentInvalid.Wraps(errors.New("session parent was loaded but session parent id is not matching with id stored in its spawn. "))
 		}
 		_, err = p.Get(ctx, h.Name+"/"+id)
 		if err != nil {
-			return ctx, ErrBadSession.Wraps(errors.New("The session does not appear on its parent"))
+			return ErrBadSession.Wraps(errors.New("The session does not appear on its parent"))
 		}
 		hc, err := h.Cookie.Encode()
 		if err != nil {
-			return ctx, err
+			return err
 		}
 		h.Cookie.ApplyMods.Set(false)
-		return context.WithValue(ctx, h.ContextKey, hc), nil
+		r = r.WithContext(context.WithValue(ctx, h.ContextKey, hc))
+		return nil
 	}
 	// if session has no parent
 	_, err = h.Get(ctx, sessionValidityKey)
 	if err != nil {
-		return ctx, ErrBadSession.Wraps(err)
+		return ErrBadSession.Wraps(err)
 	}
 	hc, err := h.Cookie.Encode()
 	if err != nil {
-		return ctx, err
+		return err
 	}
 	h.Cookie.ApplyMods.Set(false)
-	return context.WithValue(ctx, h.ContextKey, hc), nil
+	r = r.WithContext(context.WithValue(ctx, h.ContextKey, hc))
+	return nil
 }
 
 // Generate will create and load in context.Context a new server-only session
 // for a provided id if it does not already exist
-func GenerateServerOnly(ctx context.Context, id string, m Metadata, h *Handler) (context.Context, error) {
+func GenerateServerOnly(r *http.Request, id string, h *Handler)  error {
+	ctx:= r.Context()
 	h.SetID(id)
-	_, err := h.Get(ctx, sessionValidityKey)
+	_, err := h.Get(r.Context(), sessionValidityKey)
 	if err == nil {
-		ctx, err = LoadServerOnly(ctx, id, h)
+		err = LoadServerOnly(r, id, h)
 		if err != nil {
-			return ctx, errors.New("Session does already exist but could not be loaded").Wraps(err)
+			return errors.New("Session does already exist but could not be loaded").Wraps(err)
 		}
-		return ctx, err
+		return err
 	}
 	err = h.Put(ctx, sessionValidityKey, []byte("true"), time.Duration(h.Cookie.HttpCookie.MaxAge))
 	if err != nil {
-		return ctx, err
+		return err
 	}
 
 	p, err := h.Parent()
 	if err == nil {
 		if !p.Loaded(ctx) {
-			return ctx, ErrParentInvalid
+			return ErrParentInvalid
 		}
 		err = h.Put(ctx, p.Name+"/id", []byte(id), 0)
 		if err != nil {
-			return ctx, err
+			return err
 		}
-		err = p.Put(ctx, h.Name+"/"+id, m.ToJSON(), 0)
+		err = p.Put(ctx, h.Name+"/"+id, Info(r).ToJSON(), 0)
 	}
 
 	hc, err := h.Cookie.Encode()
 	if err != nil {
-		return ctx, err
+		return err
 	}
 	h.Cookie.ApplyMods.Set(false)
-	return context.WithValue(ctx, h.ContextKey, hc), nil
+	r = r.WithContext(context.WithValue(ctx, h.ContextKey, hc))
+	return nil
 }
 
 // Spawn returns a handler for a subsession, that is, a dependent session.
@@ -766,7 +778,7 @@ func (h Handler) Revoke(ctx context.Context) error {
 }
 
 func (h Handler) Touch(ctx context.Context) error {
-	// sends the signal to send a session cvookie back to the client to renew
+	// sends the signal to send a session cookie back to the client to renew
 	if !h.ServerOnly {
 		h.Cookie.Touch()
 		return nil
@@ -779,28 +791,27 @@ func (h Handler) Touch(ctx context.Context) error {
 }
 
 // ServeHTTP effectively makes the session a xhttp request handler.
-func (h Handler) ServeHTTP(ctx context.Context, res http.ResponseWriter, req *http.Request) {
+func (h Handler) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 	// We want any potential caching system to remain aware of changes to the
 	// cookie header. As such, we have to add a Vary header.
 	res.Header().Add("Vary", "Cookie")
 
-	c, err := h.Load(ctx, res, req)
+	err := h.Load(res, req)
 	if err != nil {
-		c, err = h.Generate(c, res, req)
+	 	err = h.Generate(res, req)
 		if err != nil {
 			http.Error(res, "Unable to generate session", http.StatusInternalServerError)
 			return
 		}
 	}
-	c, err = h.Save(c, res, req)
+	err = h.Save(res, req)
 	if err != nil {
 		http.Error(res, "Unable to set session cookie", http.StatusInternalServerError)
 		return
 	}
 
 	if h.next != nil {
-		req = req.WithContext(c)
-		h.next.ServeHTTP(c, res, req)
+		h.next.ServeHTTP(res, req)
 	}
 }
 
@@ -824,7 +835,7 @@ func (m Metadata) ToJSON() []byte {
 	return b
 }
 
-func Info(w http.ResponseWriter, r *http.Request) Metadata {
+func Info(r *http.Request) Metadata {
 	m := Metadata{}
 	m.Start = time.Now().UTC()
 	m.UserAgent = r.UserAgent()
@@ -835,12 +846,12 @@ func Info(w http.ResponseWriter, r *http.Request) Metadata {
 // Enforce return a handler whose purpose is tom make sure that the sessions are
 // present before continuing with request handling.
 func Enforcer(sessions ...Handler) xhttp.HandlerLinker {
-	return xhttp.LinkableHandler(xhttp.HandlerFunc(func(ctx context.Context, w http.ResponseWriter, r *http.Request) {
-		c := ctx
+	return xhttp.LinkableHandler(xhttp.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c := r.Context()
 		var err error
 		if len(sessions) != 0 {
 			for _, s := range sessions { // TODO cancel context
-				c, err = s.Load(c, w, r)
+				err = s.Load(w, r)
 				if err != nil {
 					http.Error(w, "Some session credentials are missing", http.StatusUnauthorized) // TODO perhaps create an enforcer that does not write the response but return a bool or something
 					return
@@ -848,7 +859,7 @@ func Enforcer(sessions ...Handler) xhttp.HandlerLinker {
 				continue
 			}
 		}
-		r.WithContext(c)
+		r=r.WithContext(c)
 	}))
 }
 

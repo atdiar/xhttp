@@ -5,8 +5,6 @@ import (
 	"net/http"
 	"strconv"
 
-	"context"
-
 	"github.com/atdiar/xhttp"
 )
 
@@ -26,14 +24,14 @@ func New(maxage int, withsubdomains bool) Handler {
 	}
 }
 
-func (h Handler) ServeHTTP(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+func (h Handler) ServeHTTP( w http.ResponseWriter, r *http.Request) {
 	if h.includeSubDomains {
 		w.Header().Add("Strict-Transport-Security", "max-age="+strconv.Itoa(h.m)+"; includeSubDomains")
 	} else {
 		w.Header().Add("Strict-Transport-Security", "max-age="+strconv.Itoa(h.m))
 	}
 	if h.next != nil {
-		h.next.ServeHTTP(ctx, w, r)
+		h.next.ServeHTTP(w, r)
 	}
 }
 

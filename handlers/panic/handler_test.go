@@ -1,7 +1,6 @@
 package panic
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -14,12 +13,12 @@ var Payload = "Panicked"
 
 func TestHandler(t *testing.T) {
 	mux := xhttp.NewServeMux()
-	mux.USE(NewHandler(func(msg interface{}, ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	mux.USE(NewHandler(func(msg interface{}, w http.ResponseWriter, r *http.Request) {
 		// do something simple
 		_, _ = fmt.Fprint(w, msg)
 	}))
 
-	mux.GET("/", xhttp.HandlerFunc(func(ctx context.Context, res http.ResponseWriter, req *http.Request) {
+	mux.GET("/", xhttp.HandlerFunc(func(res http.ResponseWriter, req *http.Request) {
 		// Let's just panic here and see if it is going to get handled as we expect.
 		panic(Payload)
 	}))
