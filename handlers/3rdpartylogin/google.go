@@ -3,6 +3,7 @@ package login
 import (
 	"context"
 	"net/http"
+	"encoding/json"
 
 	"github.com/atdiar/xhttp/handlers/oauth2"
 	"github.com/atdiar/xhttp/handlers/session"
@@ -15,14 +16,13 @@ import (
 
 type GoogleProvider struct {
 	Session     session.Handler
-	QueryUser   func(ctx context.Context, userinfo interface{}) (string, error)
-	CreateUser  func(ctx context.Context, userinfo interface{}) error
+	QueryUser   func(ctx context.Context, userinfo map[string]interface{}) (map[string]string, error)
 	RedirectURL string
-	SignUpURL   string
+	NewUSerURL   string
 }
 
-func WithGoogle(s session.Handler, redirectURL string, signupURL string, queryUser func(ctx context.Context, userinfo interface{}) (string, error), createUser func(ctx context.Context, userinfo interface{}) error) GoogleProvider {
-	return GoogleProvider{s, queryUser, createUser, redirectURL, signupURL}
+func WithGoogle(s session.Handler, redirectURL string, createNewUserURL string, queryUser func(ctx context.Context, provideruserinfo map[string]interface{}) (dbuserinfo map[string]string, err error)) GoogleProvider {
+	return GoogleProvider{s, queryUser, redirectURL, createNewUserURL}
 }
 
 func (g GoogleProvider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -63,42 +63,50 @@ func (g GoogleProvider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	userinfo["name"] = name
 	userinfo["picture"] = picture
 
-	userid, err := g.QueryUser(r.Context(), userinfo)
-
-	if err != nil {
-		err = g.Session.Generate(w, r)
-		if err != nil {
-			http.Error(w, "Could not create user session: \n"+err.Error(), http.StatusInternalServerError)
-		}
-		id, err := g.Session.ID()
-		if err != nil {
-			g.Session.Cookie.Erase(w, r)
-			// TODO revoke session ?
-			http.Error(w, "Could not create user session ID: \n"+err.Error(), http.StatusInternalServerError)
-		}
-		userinfo["id"] = id
-		err = g.CreateUser(r.Context(), userinfo)
-		if err != nil {
-			g.Session.Cookie.Erase(w, r)
-			// TODO revoke session ?
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-		http.Redirect(w, r, g.SignUpURL, http.StatusTemporaryRedirect)
+	// Let's generate an authenticated session
+	err= g.Session.Generate(w,r)
+	if err!= nil{
+		http.Error(w,"Unable to create authenticated session", http.StatusInternalServerError)
 		return
 	}
-	// TODO review user id should not be saved in cookie  sessionid may . user id and session id may have to be linked transitorily
-	// g.Session.SetID(userid)
-	g.Session.Put(r.Context(),"userid", []byte(userid), 0)
+	rawuserinfo,err:= json.Marshal(userinfo)
+	if err!= nil{
+		http.Error(w,"Unable to create authenticated session", http.StatusInternalServerError)
+		return
+	}
+	err = g.Session.Put(r.Context(),"user",rawuserinfo,0)
+	if err!= nil{
+		http.Error(w,"Unable to save authenticated user info in session", http.StatusInternalServerError)
+		return
+	}
+
+	// Let's query user  in the database
+	user, err := g.QueryUser(r.Context(), userinfo)
+	if err != nil {
+		http.Redirect(w, r, g.NewUSerURL, http.StatusTemporaryRedirect)
+		return
+	}
+	rawuser,err:= json.Marshal(user)
+	if err!= nil{
+		http.Error(w,"Unable to create authenticated session", http.StatusInternalServerError)
+		return
+	}
+
+	err = g.Session.Put(r.Context(),"user", rawuser, 0)
+	if err!= nil{
+		http.Error(w,"Unable to save authenticated user in session", http.StatusInternalServerError)
+		return
+	}
 	err = g.Session.Save(w, r)
 	if err != nil {
-		http.Error(w, "Could not load user session: \n"+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Could not save authenticated user session.", http.StatusInternalServerError)
 		return
 	}
 	http.Redirect(w, r, g.RedirectURL, http.StatusTemporaryRedirect)
 	return
 }
 
-func (g GoogleProvider) Logout(w http.ResponseWriter, r *http.Request) {
+func (g GoogleProvider) Close(w http.ResponseWriter, r *http.Request) {
 	g.Session.Cookie.Erase(w, r)
 	// TODO revoke session
 }

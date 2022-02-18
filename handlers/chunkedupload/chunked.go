@@ -368,7 +368,7 @@ func (c ChunkHandler) Link(hn xhttp.Handler) xhttp.HandlerLinker {
 // session upload whose id should be transmitted to the client to attach to each
 // chunk information.
 // The upload id generator that should be used can be further specified via the
-// SetIDgenerator method.
+// SetUploadIDgenerator config function..
 type Initializer struct {
 	c    *ChunkHandler
 	next xhttp.Handler

@@ -611,6 +611,7 @@ func (h *Handler) Generate(res http.ResponseWriter, req *http.Request) error {
 }
 
 // Load is used to load a session which is only known server-side. (serve-only)
+// In general, those kind of sessions are tied to a regular session (cookie-based).
 func LoadServerOnly(r *http.Request, id string, h *Handler) error {
 	ctx:= r.Context()
 	if !h.ServerOnly || h.Store == nil {
@@ -682,7 +683,7 @@ load:
 }
 
 // Generate will create and load in context.Context a new server-only session
-// for a provided id if it does not already exist
+// for a provided id if it does not already exist.
 func GenerateServerOnly(r *http.Request, id string, h *Handler)  error {
 	ctx:= r.Context()
 	h.SetID(id)
@@ -727,13 +728,13 @@ func (h Handler) Spawn(name string, options ...func(Handler) Handler) Handler {
 	return sh
 }
 
-// Spawned links to session into a Parent-Spawn dependent relationship.
+// Spawned links a session into a Parent-Spawn dependent relationship.
 // A session cannot spawn itself (i.e. session names have to be different).
 func (h Handler) Spawned(s Handler) Handler {
 	if h.Name != s.Name {
 		s.parent = &h
 	}
-	return s
+	return h
 }
 
 // Parent returns an unitialized copy of the handler of a Parent session if

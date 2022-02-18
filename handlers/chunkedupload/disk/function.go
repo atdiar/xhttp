@@ -20,7 +20,7 @@ func Upload(ctx context.Context, u upload.Object) (n int64, rollbackFn func() er
 	}
 
 	if u.ChunksTotal > 2 {
-		// todo set fielname for the chunk and uploadpath for
+		// todo set fieldname for the chunk and uploadpath for
 
 		uploadname = u.Filename + "." + strconv.FormatInt(u.ChunkOffset, 10)
 		uploadpath = filepath.Dir(filepath.Join("tmp/", u.EvalPath()))
@@ -44,4 +44,6 @@ func Upload(ctx context.Context, u upload.Object) (n int64, rollbackFn func() er
 	return n, func() error { return os.Remove(filepath.Join(uploadpath, uploadname)) }, file.Sync()
 }
 
-func Complete(ctx context.Context, uploadid string) error {}
+func UuloadComplete(ctx context.Context, uploadid string) error {
+	// merge chunks 
+}
